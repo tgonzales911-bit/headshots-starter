@@ -20,7 +20,6 @@ import { ThemeToggle } from "./homepage/theme-toggle";
 export const dynamic = "force-dynamic";
 
 const stripeIsConfigured = process.env.NEXT_PUBLIC_STRIPE_IS_ENABLED === "true";
-const packsIsEnabled = process.env.NEXT_PUBLIC_TUNE_TYPE === "packs";
 export const revalidate = 0;
 
 export default async function Navbar() {
@@ -41,7 +40,7 @@ export default async function Navbar() {
       <div className="container flex h-16 items-center justify-between">
         <Link href="/" className="flex items-center gap-2 font-bold text-xl">
           <Camera className="h-5 w-5 text-primary" />
-          <span>Headshots AI</span>
+          <span>BadgeShot</span>
         </Link>
         
         {user && (
@@ -49,11 +48,6 @@ export default async function Navbar() {
             <Link href="/overview" className="text-sm font-medium hover:text-primary transition-colors">
               Home
             </Link>
-            {packsIsEnabled && (
-              <Link href="/overview/packs" className="text-sm font-medium hover:text-primary transition-colors">
-                Packs
-              </Link>
-            )}
             {stripeIsConfigured && (
               <Link href="/get-credits" className="text-sm font-medium hover:text-primary transition-colors">
                 Get Credits

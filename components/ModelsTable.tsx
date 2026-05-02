@@ -11,7 +11,6 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 
-import { Database } from "@/types/supabase";
 import { Icons } from "./icons";
 import { useRouter } from "next/navigation";
 import { modelRowWithSamples } from "@/types/utils";
@@ -20,7 +19,7 @@ type ModelsTableProps = {
   models: modelRowWithSamples[];
 };
 
-export default async function ModelsTable({ models }: ModelsTableProps) {
+export default function ModelsTable({ models }: ModelsTableProps) {
   const router = useRouter();
   const handleRedirect = (id: number) => {
     router.push(`/overview/models/${id}`);
@@ -40,7 +39,7 @@ export default async function ModelsTable({ models }: ModelsTableProps) {
         <TableBody>
           {models?.map((model) => (
             <TableRow
-              key={model.modelId}
+              key={model.id}
               onClick={() => handleRedirect(model.id)}
               className="cursor-pointer h-16"
             >

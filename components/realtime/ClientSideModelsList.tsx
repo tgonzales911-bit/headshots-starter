@@ -8,8 +8,6 @@ import { useEffect, useState } from "react";
 import { FaImages } from "react-icons/fa";
 import ModelsTable from "../ModelsTable";
 
-const packsIsEnabled = process.env.NEXT_PUBLIC_TUNE_TYPE === "packs";
-
 export const revalidate = 0;
 
 type ClientSideModelsListProps = {
@@ -62,7 +60,7 @@ export default function ClientSideModelsList({
         <div className="flex flex-col gap-4">
           <div className="flex flex-row gap-4 w-full justify-between items-center text-center">
             <h1>Your models</h1>
-            <Link href={packsIsEnabled ? "/overview/packs" : "/overview/models/train/raw-tune"} className="w-fit">
+            <Link href="/overview/models/train" className="w-fit">
               <Button size={"sm"}>
                 Train model
               </Button>
@@ -78,7 +76,7 @@ export default function ClientSideModelsList({
             Get started by training your first model.
           </h1>
           <div>
-            <Link href={packsIsEnabled ? "/overview/packs" : "/overview/models/train/raw-tune"}>
+            <Link href="/overview/models/train">
               <Button size={"lg"}>Train model</Button>
             </Link>
           </div>

@@ -9,10 +9,10 @@ export default function Footer() {
           <div className="space-y-4">
             <Link href="/" className="flex items-center gap-2 font-bold text-xl">
               <Camera className="h-5 w-5 text-primary" />
-              <span>Headshots AI</span>
+              <span>BadgeShot</span>
             </Link>
             <p className="text-sm text-muted-foreground">
-              Professional AI-generated headshots for your online presence.
+              AI-powered badge headshots for first responders.
             </p>
           </div>
           <div className="space-y-4">
@@ -40,7 +40,7 @@ export default function Footer() {
             <ul className="space-y-2">
               <li>
                 <Link 
-                  href="https://github.com/astriaai/headshots-starter" 
+                  href="https://github.com/badgeshot" 
                   className="text-sm text-muted-foreground hover:text-foreground transition-colors"
                   target="_blank"
                 >
@@ -48,12 +48,12 @@ export default function Footer() {
                 </Link>
               </li>
               <li>
-                <Link 
-                  href="https://docs.astria.ai/docs/api/pack/pack/" 
+                <Link
+                  href="https://fal.ai/models/fal-ai/flux-lora-portrait-trainer/api"
                   className="text-sm text-muted-foreground hover:text-foreground transition-colors"
                   target="_blank"
                 >
-                  Documentation
+                  Fal training API
                 </Link>
               </li>
               <li>
@@ -72,7 +72,7 @@ export default function Footer() {
             <ul className="space-y-2">
               <li>
                 <Link 
-                  href="mailto:support@astria.ai" 
+                  href="mailto:support@badgeshot.com" 
                   className="text-sm text-muted-foreground hover:text-foreground transition-colors"
                 >
                   Contact
@@ -92,17 +92,17 @@ export default function Footer() {
         </div>
         <div className="mt-12 flex flex-col items-center justify-between gap-4 border-t pt-8 md:flex-row">
           <p className="text-sm text-muted-foreground">
-            © {new Date().getFullYear()} Headshots AI. All rights reserved.
+            © {new Date().getFullYear()} BadgeShot. All rights reserved.
           </p>
           <div className="flex items-center gap-4">
             <p className="text-sm text-muted-foreground">
-              Open-source powered by{" "}
+              Powered by{" "}
               <Link
-                href="https://www.astria.ai/"
+                href="https://fal.ai/"
                 className="text-primary hover:underline"
                 target="_blank"
               >
-                Astria
+                Fal
               </Link>
               ,{" "}
               <Link

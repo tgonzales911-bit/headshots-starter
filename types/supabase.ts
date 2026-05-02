@@ -37,23 +37,66 @@ export interface Database {
           }
         ]
       }
+      headshots: {
+        Row: {
+          created_at: string
+          id: number
+          metadata: Json | null
+          model_id: number
+          uri: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: number
+          metadata?: Json | null
+          model_id: number
+          uri: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: number
+          metadata?: Json | null
+          model_id?: number
+          uri?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "headshots_model_id_fkey"
+            columns: ["model_id"]
+            referencedRelation: "models"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "headshots_user_id_fkey"
+            columns: ["user_id"]
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
       images: {
         Row: {
           created_at: string
           id: number
           modelId: number
+          model_id: number | null
           uri: string
         }
         Insert: {
           created_at?: string
           id?: number
-          modelId: number
+          modelId?: number
+          model_id?: number
           uri: string
         }
         Update: {
           created_at?: string
           id?: number
           modelId?: number
+          model_id?: number
           uri?: string
         }
         Relationships: [
@@ -69,8 +112,13 @@ export interface Database {
         Row: {
           created_at: string
           id: number
+          latest_request_id: string | null
+          lora_url: string | null
           modelId: string | null
           name: string | null
+          processing_status?: string | null
+          prompt_options: Json | null
+          result_image_url: string | null
           status: string
           type: string | null
           user_id: string | null
@@ -78,8 +126,13 @@ export interface Database {
         Insert: {
           created_at?: string
           id?: number
+          latest_request_id?: string | null
+          lora_url?: string | null
           modelId?: string | null
           name?: string | null
+          processing_status?: string | null
+          prompt_options?: Json | null
+          result_image_url?: string | null
           status?: string
           type?: string | null
           user_id?: string | null
@@ -87,8 +140,13 @@ export interface Database {
         Update: {
           created_at?: string
           id?: number
+          latest_request_id?: string | null
+          lora_url?: string | null
           modelId?: string | null
           name?: string | null
+          processing_status?: string | null
+          prompt_options?: Json | null
+          result_image_url?: string | null
           status?: string
           type?: string | null
           user_id?: string | null
@@ -96,6 +154,55 @@ export interface Database {
         Relationships: [
           {
             foreignKeyName: "models_user_id_fkey"
+            columns: ["user_id"]
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
+      pipeline_events: {
+        Row: {
+          created_at: string
+          event_type: string
+          id: number
+          message: string | null
+          model_id: number
+          payload: Json | null
+          request_id: string | null
+          stage: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          event_type: string
+          id?: number
+          message?: string | null
+          model_id: number
+          payload?: Json | null
+          request_id?: string | null
+          stage: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          event_type?: string
+          id?: number
+          message?: string | null
+          model_id?: number
+          payload?: Json | null
+          request_id?: string | null
+          stage?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pipeline_events_model_id_fkey"
+            columns: ["model_id"]
+            referencedRelation: "models"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pipeline_events_user_id_fkey"
             columns: ["user_id"]
             referencedRelation: "users"
             referencedColumns: ["id"]
@@ -135,7 +242,21 @@ export interface Database {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      merge_pipeline_indexed_result: {
+        Args: {
+          p_model_id: number
+          p_user_id: string
+          p_results_key: string
+          p_slot: number
+          p_url: string
+          p_expected?: number
+        }
+        Returns: {
+          filled_count: number
+          results: Json
+          became_complete: boolean
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never

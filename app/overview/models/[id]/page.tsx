@@ -39,6 +39,10 @@ export default async function Index({ params }: { params: { id: string } }) {
     .eq("modelId", model.id);
 
   const { data: samples } = await supabase.from("samples").select("*").eq("modelId", model.id);
+  const { data: headshots } = await supabase
+    .from("headshots")
+    .select("*")
+    .eq("model_id", model.id);
 
   return (
     <div id="train-model-container" className="w-full h-full">
@@ -65,7 +69,12 @@ export default async function Index({ params }: { params: { id: string } }) {
         </div>
       </div>
 
-      <ClientSideModel samples={samples ?? []} serverModel={model} serverImages={images ?? []} />
+      <ClientSideModel
+        samples={samples ?? []}
+        serverModel={model}
+        serverImages={images ?? []}
+        serverHeadshots={headshots ?? []}
+      />
     </div>
   );
 }

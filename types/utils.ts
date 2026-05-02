@@ -8,5 +8,6 @@ export type modelRowWithSamples = modelRow & {
 };
 
 export type imageRow = Database["public"]["Tables"]["images"]["Row"];
+export type headshotRow = Database["public"]["Tables"]["headshots"]["Row"];
 
 export type creditsRow = Database["public"]["Tables"]["credits"]["Row"];
