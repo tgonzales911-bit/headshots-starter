@@ -336,11 +336,21 @@ export async function POST(request: Request) {
 
     const { data: modelForMerge } = await supabase
       .from("models")
-      .select("user_id")
+      .select("user_id, status")
       .eq("id", modelId)
       .single();
     if (!modelForMerge?.user_id) {
       console.error("[pipeline-webhook] final_edit: could not load models.user_id", { modelId });
+      return NextResponse.json({ ok: true }, { status: 200 });
+    }
+
+    const pipelineComplete =
+      modelForMerge.status === "finished" || modelForMerge.status === "complete";
+    if (pipelineComplete) {
+      console.log(
+        "[pipeline-webhook] final_edit webhook received after completion, ignoring",
+        { modelId, index }
+      );
       return NextResponse.json({ ok: true }, { status: 200 });
     }
 
