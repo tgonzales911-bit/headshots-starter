@@ -27,15 +27,26 @@ export function buildFluxBasePrompt(): string {
  */
 export function buildGeminiEditPrompt(): string {
   return [
-    "Edit this set of images into one professional Class A police or fire department portrait.",
-    "THE FACE IS SACRED AND MUST NOT CHANGE: preserve the subject's face, skin tone, bone structure, expression, eyes, nose, mouth, ears, hair, and identity completely — zero alteration, zero beautification, zero replacement, zero blending from reference photos.",
-    "Image 0 is the portrait: the face and head in the output must match Image 0 exactly; treat the face as untouchable.",
-    "Image 1 is the department badge: place it on the LEFT CHEST of the uniform jacket at realistic scale and angle, matching studio lighting.",
-    "Image 2 is the shoulder patch: place it on the LEFT SLEEVE of the uniform jacket as sewn-on fabric, correct perspective and light.",
-    "Image 3 is the collar brass: place matching metallic insignia on BOTH collar points, about one inch each, with believable reflections.",
-    "Replace the background entirely with an American flag, slightly blurred — 85mm f/2.8 style bokeh — as in a high-end portrait studio behind the subject.",
-    "Keep consistent professional studio lighting on the subject throughout.",
-    "Final result: a single photorealistic Class A uniform headshot suitable for police or fire department use.",
+    "FACE AND HEAD PRESERVATION (highest priority):",
+    "The subject's face, head, and scalp must be preserved exactly as they appear in Image 0 with zero alterations.",
+    "Do not add, remove, or change any hair, stubble, or scalp texture.",
+    "Do not smooth, alter, or relight the skin on the face or head.",
+    "The subject's exact likeness is sacred — any facial change makes this image unusable.",
+    "INSIGNIA PLACEMENT:",
+    "Image 1 is the department badge — place it on the LEFT chest of the uniform, centered, properly scaled to look like it is physically pinned.",
+    "Image 2 is the shoulder patch — place it on the LEFT sleeve, upper arm, as a sewn embroidered patch.",
+    "Image 3 is the collar brass — place identical brass on BOTH collar points, properly scaled.",
+    "BACKGROUND:",
+    "Replace the existing background with an American flag.",
+    "The flag should be slightly out of focus, simulating 85mm f/2.8 portrait lens bokeh — it should read clearly as an American flag but not be tack-sharp.",
+    "The flag should be evenly lit, NOT blown out, NOT overexposed.",
+    "Exposure should match the subject — the flag brightness should feel like a professional portrait studio backdrop, not a window or light source.",
+    "Flag colors: deep red, bright white stripes, navy blue canton with white stars.",
+    "OVERALL:",
+    "Final image must look like an official department Class A portrait photo.",
+    "Maintain consistent professional studio lighting on the subject throughout.",
+    "Do not alter the uniform in any way beyond adding the insignia.",
+    "Output must be photorealistic, not illustrated or stylized.",
   ]
     .join(" ")
     .replace(/\s+/g, " ")
