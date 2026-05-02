@@ -3,6 +3,7 @@ import { Icons } from "@/components/icons";
 import ClientSideModel from "@/components/realtime/ClientSideModel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { collectFinalDownloadUrls } from "@/lib/finalDownloadUrls";
 import { Database } from "@/types/supabase";
 import { createServerComponentClient } from "@supabase/auth-helpers-nextjs";
 import { cookies } from "next/headers";
@@ -44,6 +45,11 @@ export default async function Index({ params }: { params: { id: string } }) {
     .select("*")
     .eq("model_id", model.id);
 
+  const serverDownloadUrls =
+    model.status === "finished"
+      ? collectFinalDownloadUrls(model, headshots ?? [], images ?? [])
+      : [];
+
   return (
     <div id="train-model-container" className="w-full h-full">
       <div className="flex flex-row gap-4">
@@ -74,6 +80,7 @@ export default async function Index({ params }: { params: { id: string } }) {
         serverModel={model}
         serverImages={images ?? []}
         serverHeadshots={headshots ?? []}
+        serverDownloadUrls={serverDownloadUrls}
       />
     </div>
   );

@@ -96,9 +96,29 @@ function extractAllImageUrls(payload: Record<string, unknown> | undefined): stri
     .filter(Boolean);
 }
 
-function firstPortraitUrl(payload: Record<string, unknown> | undefined): string | null {
-  const all = extractAllImageUrls(payload);
-  return all[0] ?? null;
+function extractImageUrl(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const p = payload as Record<string, unknown>;
+  const out = p.output;
+  const fromOutput =
+    out && typeof out === "object" && !Array.isArray(out) && "images" in out
+      ? (out as Record<string, unknown>).images
+      : undefined;
+  const images = (Array.isArray(fromOutput) ? fromOutput : undefined) ?? p.images;
+  if (!images || !Array.isArray(images) || images.length === 0) return null;
+  const first = images[0];
+  if (typeof first === "string") {
+    const s = first.trim();
+    return s.length > 0 ? s : null;
+  }
+  if (typeof first === "object" && first !== null && "url" in first) {
+    const u = (first as { url?: unknown }).url;
+    if (typeof u === "string") {
+      const s = u.trim();
+      return s.length > 0 ? s : null;
+    }
+  }
+  return null;
 }
 
 function resultsJsonToStrings(results: unknown, expected: number): string[] {
@@ -316,18 +336,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true }, { status: 200 });
     }
 
-    const imageUrl = firstPortraitUrl(body.payload);
+    const imageUrl = extractImageUrl(body.payload);
     if (!imageUrl) {
-      const msg = "final_edit: missing image URL in payload.images[0]";
-      console.error("[pipeline-webhook]", msg, { modelId, index });
-      await insertPipelineEvent(supabase, {
-        userId,
+      let payloadShape: string;
+      try {
+        payloadShape = JSON.stringify(body.payload);
+      } catch {
+        payloadShape = "[unserializable payload]";
+      }
+      console.warn("[pipeline-webhook] final_edit: could not extract image URL", {
         modelId,
-        stage: "final_edit",
-        eventType: "webhook_error",
-        message: msg,
-        requestId: body.request_id ?? null,
-        payload: { details: msg, index },
+        index,
+        payloadShape,
       });
       return NextResponse.json({ ok: true }, { status: 200 });
     }

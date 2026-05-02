@@ -36,7 +36,7 @@ export function buildGeminiEditPrompt(): string {
     "INSIGNIA PLACEMENT:",
     "Image 1 is the department badge — place it on the LEFT chest of the uniform, centered, properly scaled to look like it is physically pinned.",
     "Image 2 is the shoulder patch — place it on the LEFT sleeve, upper arm, as a sewn embroidered patch.",
-    "Image 3 is the collar brass insignia — place it on BOTH collar points. The brass must be small and proportional, approximately 3/4 inch diameter as physically worn on a real Class A uniform collar. Do not scale it up or make it decorative. It should look like it is physically pinned to each collar tip.",
+    "Image 3 is the collar brass insignia — place it on BOTH collar points. The brass must be small and proportional, approximately 3/4 inch diameter as physically worn on a real Class A uniform collar. Do not scale it up or make it decorative. It should look like it is physically pinned to each collar tip. Each brass piece should be no larger than the width of the collar tip itself — approximately the size of a shirt button when viewed at portrait distance. If in doubt, make it smaller.",
     "BACKGROUND:",
     "Replace the existing background with an American flag.",
     "The flag should be slightly out of focus, simulating 85mm f/2.8 portrait lens bokeh — it should read clearly as an American flag but not be tack-sharp.",

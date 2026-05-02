@@ -66,7 +66,12 @@ export default function ClientSideModelsList({
               </Button>
             </Link>
           </div>
-          <ModelsTable models={models} />
+          <ModelsTable
+            models={models}
+            onModelDeleted={(id) =>
+              setModels((prev) => prev.filter((m) => m.id !== id))
+            }
+          />
         </div>
       )}
       {models && models.length === 0 && (

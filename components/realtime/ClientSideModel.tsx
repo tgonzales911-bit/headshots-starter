@@ -1,10 +1,12 @@
 "use client";
 
 import { Icons } from "@/components/icons";
+import { Button } from "@/components/ui/button";
+import { collectFinalDownloadUrls } from "@/lib/finalDownloadUrls";
 import { Database } from "@/types/supabase";
 import { headshotRow, imageRow, modelRow, sampleRow } from "@/types/utils";
 import { createClient } from "@supabase/supabase-js";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 export const revalidate = 0;
 
@@ -13,6 +15,8 @@ type ClientSideModelProps = {
   serverImages: imageRow[];
   serverHeadshots: headshotRow[];
   samples: sampleRow[];
+  /** Server snapshot from model detail page for Results download URLs. */
+  serverDownloadUrls?: string[];
 };
 
 type PipelineEvent = {
@@ -46,6 +50,7 @@ export default function ClientSideModel({
   serverImages,
   serverHeadshots,
   samples,
+  serverDownloadUrls = [],
 }: ClientSideModelProps) {
   const supabase = createClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL as string,
@@ -99,6 +104,13 @@ export default function ClientSideModel({
     };
   }, [serverModel.id]);
 
+  const downloadUrls = useMemo(() => {
+    const fromLive = collectFinalDownloadUrls(model, serverHeadshots, serverImages);
+    if (fromLive.length === 4) return fromLive;
+    if (serverDownloadUrls.length === 4) return serverDownloadUrls.slice(0, 4);
+    return fromLive;
+  }, [model, serverHeadshots, serverImages, serverDownloadUrls]);
+
   return (
     <div id="train-model-container" className="w-full h-full">
       <div className="flex flex-col w-full mt-4 gap-8">
@@ -121,6 +133,20 @@ export default function ClientSideModel({
             {model.status === "finished" && (
               <div className="flex flex-1 flex-col gap-2">
                 <h1 className="text-xl">Results</h1>
+                {downloadUrls.length === 4 && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="w-fit bg-blue-600 text-white hover:bg-blue-500 dark:bg-blue-600 dark:hover:bg-blue-500"
+                    onClick={() => {
+                      downloadUrls.forEach((url) =>
+                        window.open(url, "_blank", "noopener,noreferrer")
+                      );
+                    }}
+                  >
+                    Download All 4
+                  </Button>
+                )}
                 {serverHeadshots && serverHeadshots.length > 0 ? (
                   <div className="flex flex-row flex-wrap gap-4">
                     {serverHeadshots.map((image) => (
