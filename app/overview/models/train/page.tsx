@@ -1,6 +1,5 @@
 export const dynamic = 'force-dynamic'
 
-import PurchaseToContinueButton from "@/components/overview/PurchaseToContinueButton";
 import TrainModelZone from "@/components/TrainModelZone";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,6 +13,7 @@ import { Database } from "@/types/supabase";
 import { createServerComponentClient } from "@supabase/auth-helpers-nextjs";
 import { cookies } from "next/headers";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { FaArrowLeft } from "react-icons/fa";
 
 export default async function TrainModelPage() {
@@ -22,15 +22,8 @@ export default async function TrainModelPage() {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const stripeOn = process.env.NEXT_PUBLIC_STRIPE_IS_ENABLED === "true";
-  let hasCredits = false;
-  if (stripeOn && user) {
-    const { data: creditRow } = await supabase
-      .from("credits")
-      .select("credits")
-      .eq("user_id", user.id)
-      .maybeSingle();
-    hasCredits = (creditRow?.credits ?? 0) > 0;
+  if (!user) {
+    redirect("/login");
   }
 
   return (
@@ -53,11 +46,7 @@ export default async function TrainModelPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-6">
-            {stripeOn && !hasCredits ? (
-              <PurchaseToContinueButton />
-            ) : (
-              <TrainModelZone />
-            )}
+            <TrainModelZone />
           </CardContent>
         </Card>
       </div>
