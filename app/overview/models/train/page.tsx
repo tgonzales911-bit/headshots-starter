@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic'
+
 import PurchaseToContinueButton from "@/components/overview/PurchaseToContinueButton";
 import TrainModelZone from "@/components/TrainModelZone";
 import { Button } from "@/components/ui/button";
@@ -13,8 +15,6 @@ import { createServerComponentClient } from "@supabase/auth-helpers-nextjs";
 import { cookies } from "next/headers";
 import Link from "next/link";
 import { FaArrowLeft } from "react-icons/fa";
-
-export const dynamic = "force-dynamic";
 
 export default async function TrainModelPage() {
   const supabase = createServerComponentClient<Database>({ cookies });
