@@ -683,10 +683,8 @@ export default function TrainModelZone() {
           >
             <FormLabel>Samples</FormLabel>
             <FormDescription>
-              Upload 4-10 images of the person you want to generate headshots
-              for. iPhone HEIC/HEIF photos are converted to compressed JPEG
-              before upload (same as JPEG/PNG) so large originals stay under the
-              upload limit.
+              Upload 10-15 photos for best results. More photos = better
+              likeness. iPhone photos work great.
             </FormDescription>
             <div className="outline-dashed outline-2 outline-gray-100 hover:outline-blue-500 w-full h-full rounded-md p-4 flex justify-center align-middle">
               <input {...getInputProps()} />

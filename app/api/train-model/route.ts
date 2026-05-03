@@ -15,10 +15,6 @@ import Stripe from "stripe";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-const stripeIsConfigured = process.env.NEXT_PUBLIC_STRIPE_IS_ENABLED === "true";
-const useStripeCheckoutFlow =
-  !!process.env.STRIPE_SECRET_KEY && !!process.env.STRIPE_PRICE_ID_ONE_CREDIT;
-
 const falKey = process.env.FAL_KEY;
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -27,6 +23,9 @@ const trainingBucket =
 
 export async function POST(request: Request) {
   const payload = await request.json();
+  const stripeIsConfigured = process.env.NEXT_PUBLIC_STRIPE_IS_ENABLED === "true";
+  const useStripeCheckoutFlow =
+    !!process.env.STRIPE_SECRET_KEY && !!process.env.STRIPE_PRICE_ID_ONE_CREDIT;
   const images = payload.urls as string[];
   const name = payload.name as string;
   const type = payload.type as string;
