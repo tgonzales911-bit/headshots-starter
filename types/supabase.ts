@@ -166,7 +166,7 @@ export interface Database {
           event_type: string
           id: number
           message: string | null
-          model_id: number
+          model_id: number | null
           payload: Json | null
           request_id: string | null
           stage: string
@@ -177,7 +177,7 @@ export interface Database {
           event_type: string
           id?: number
           message?: string | null
-          model_id: number
+          model_id?: number | null
           payload?: Json | null
           request_id?: string | null
           stage: string
@@ -188,7 +188,7 @@ export interface Database {
           event_type?: string
           id?: number
           message?: string | null
-          model_id?: number
+          model_id?: number | null
           payload?: Json | null
           request_id?: string | null
           stage?: string
