@@ -53,6 +53,12 @@ const config = {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        /** BadgeShot brand (hex for one-off use; theme tokens prefer CSS vars) */
+        brand: {
+          navy: "#1a2744",
+          gold: "#c9a84c",
+          surface: "#0d1526",
+        },
       },
       borderRadius: {
         lg: "var(--radius)",

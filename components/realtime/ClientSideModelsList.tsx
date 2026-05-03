@@ -58,11 +58,10 @@ export default function ClientSideModelsList({
     <div id="train-model-container" className="w-full">
       {models && models.length > 0 && (
         <div className="flex flex-col gap-4">
-          <div className="flex flex-row gap-4 w-full justify-between items-center text-center">
-            <h1>Your models</h1>
+          <div className="flex flex-row gap-4 w-full justify-end items-center">
             <Link href="/overview/models/train" className="w-fit">
               <Button size={"sm"}>
-                Train model
+                New BadgeShot
               </Button>
             </Link>
           </div>
@@ -76,13 +75,13 @@ export default function ClientSideModelsList({
       )}
       {models && models.length === 0 && (
         <div className="flex flex-col gap-4 items-center">
-          <FaImages size={64} className="text-gray-500" />
-          <h1 className="text-2xl">
+          <FaImages size={64} className="text-muted-foreground" />
+          <h2 className="text-2xl text-center text-foreground">
             Get started by training your first model.
-          </h1>
+          </h2>
           <div>
             <Link href="/overview/models/train">
-              <Button size={"lg"}>Train model</Button>
+              <Button size={"lg"}>New BadgeShot</Button>
             </Link>
           </div>
         </div>

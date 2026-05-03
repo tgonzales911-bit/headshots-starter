@@ -18,8 +18,9 @@ export const viewport = {
 };
 
 export const metadata = {
-  title: "BadgeShot",
-  description: "Generate awesome headshots in minutes using AI",
+  title: "BadgeShot — AI Headshots for First Responders",
+  description:
+    "Professional AI-generated headshots with your real badge, patch, and collar brass.",
 };
 
 export default function RootLayout({
@@ -30,7 +31,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="min-h-screen flex flex-col bg-background">
-        <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+        <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
           <AnnouncementBar />
           {/* Remove the section wrapper as it's interfering with sticky positioning */}
           <Suspense

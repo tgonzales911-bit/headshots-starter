@@ -25,5 +25,12 @@ export default async function Index() {
     )
     .eq("user_id", user.id);
 
-  return <ClientSideModelsList serverModels={models ?? []} />;
+  return (
+    <div className="flex w-full flex-col gap-6">
+      <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+        Your BadgeShot Orders
+      </h1>
+      <ClientSideModelsList serverModels={models ?? []} />
+    </div>
+  );
 }

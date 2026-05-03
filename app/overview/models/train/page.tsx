@@ -40,9 +40,10 @@ export default async function TrainModelPage() {
         </Link>
         <Card>
           <CardHeader>
-            <CardTitle>Train Model</CardTitle>
+            <CardTitle>Create Your BadgeShot</CardTitle>
             <CardDescription>
-              Choose a name, type, and upload some photos to get started.
+              Upload your selfies and department insignia. Your professional
+              headshots will be ready in about 30 minutes.
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-6">
