@@ -336,20 +336,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true }, { status: 200 });
     }
 
-    const payload = body.payload as Record<string, any> | undefined;
-
-    console.log("[final_edit] raw payload shape", {
-      modelId,
-      index,
-      hasImages: !!payload?.images,
-      hasOutput: !!payload?.output,
-      imagesType: typeof payload?.images,
-      firstImageType: payload?.images ? typeof payload.images[0] : "none",
-      firstImageKeys: payload?.images?.[0] ? Object.keys(payload.images[0]) : [],
-      outputImageCount: payload?.output?.images?.length ?? 0,
-      rawFirst: JSON.stringify(payload?.images?.[0])?.slice(0, 200),
-    });
-
     const imageUrl = extractImageUrl(body.payload);
     if (!imageUrl) {
       let payloadShape: string;
