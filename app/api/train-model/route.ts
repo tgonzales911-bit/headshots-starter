@@ -17,9 +17,7 @@ export const maxDuration = 300;
 
 const stripeIsConfigured = process.env.NEXT_PUBLIC_STRIPE_IS_ENABLED === "true";
 const useStripeCheckoutFlow =
-  stripeIsConfigured &&
-  Boolean(process.env.STRIPE_SECRET_KEY?.trim()) &&
-  Boolean(process.env.STRIPE_PRICE_ID_ONE_CREDIT?.trim());
+  !!process.env.STRIPE_SECRET_KEY && !!process.env.STRIPE_PRICE_ID_ONE_CREDIT;
 
 const falKey = process.env.FAL_KEY;
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
