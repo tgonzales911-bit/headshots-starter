@@ -393,9 +393,13 @@ export default function TrainModelZone() {
         body: JSON.stringify(payload),
       });
 
+      const responseData = (await response.json()) as {
+        message?: string;
+        checkoutUrl?: string;
+      };
+
       if (!response.ok) {
-        const responseData = await response.json();
-        const responseMessage: string = responseData.message;
+        const responseMessage: string = responseData.message ?? "Request failed";
         console.error("Something went wrong! ", responseMessage);
         const messageWithButton = (
           <div className="flex flex-col gap-4">
@@ -412,6 +416,14 @@ export default function TrainModelZone() {
             : responseMessage,
           duration: 5000,
         });
+        return;
+      }
+
+      if (
+        typeof responseData.checkoutUrl === "string" &&
+        responseData.checkoutUrl.length > 0
+      ) {
+        window.location.href = responseData.checkoutUrl;
         return;
       }
 

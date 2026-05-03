@@ -1,3 +1,4 @@
+import { runTrainingAfterPaidCheckout } from "@/lib/stripePostPaymentTraining";
 import { Database } from "@/types/supabase";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
@@ -51,45 +52,53 @@ export async function POST(request: Request) {
 
     if (event.type === "checkout.session.completed") {
       const session = event.data.object as Stripe.Checkout.Session;
-      const userId = session.metadata?.userId;
-      if (!userId) {
-        console.error("[stripe/webhook] checkout.session.completed missing metadata.userId");
-        return NextResponse.json({ received: true }, { status: 200 });
-      }
 
-      const admin = adminClient();
-
-      const { data: existing } = await admin
-        .from("credits")
-        .select("id, credits")
-        .eq("user_id", userId)
-        .maybeSingle();
-
-      const nextCredits = (existing?.credits ?? 0) + 1;
-
-      if (existing) {
-        const { error: updErr } = await admin
-          .from("credits")
-          .update({ credits: nextCredits })
-          .eq("user_id", userId);
-        if (updErr) console.error("[stripe/webhook] credits update", updErr);
+      if (session.metadata?.modelId) {
+        const trainResult = await runTrainingAfterPaidCheckout(session);
+        if (!trainResult.ok) {
+          console.error("[stripe/webhook] post-payment training", trainResult.message);
+        }
       } else {
-        const { error: insErr } = await admin
-          .from("credits")
-          .insert({ user_id: userId, credits: 1 });
-        if (insErr) console.error("[stripe/webhook] credits insert", insErr);
-      }
+        const userId = session.metadata?.userId;
+        if (!userId) {
+          console.error("[stripe/webhook] checkout.session.completed missing metadata.userId");
+          return NextResponse.json({ received: true }, { status: 200 });
+        }
 
-      const { error: evErr } = await admin.from("pipeline_events").insert({
-        user_id: userId,
-        model_id: null,
-        stage: "payment",
-        event_type: "completed",
-        message: session.id,
-        payload: { details: session.id },
-        request_id: session.id,
-      });
-      if (evErr) console.error("[stripe/webhook] pipeline_events", evErr);
+        const admin = adminClient();
+
+        const { data: existing } = await admin
+          .from("credits")
+          .select("id, credits")
+          .eq("user_id", userId)
+          .maybeSingle();
+
+        const nextCredits = (existing?.credits ?? 0) + 1;
+
+        if (existing) {
+          const { error: updErr } = await admin
+            .from("credits")
+            .update({ credits: nextCredits })
+            .eq("user_id", userId);
+          if (updErr) console.error("[stripe/webhook] credits update", updErr);
+        } else {
+          const { error: insErr } = await admin
+            .from("credits")
+            .insert({ user_id: userId, credits: 1 });
+          if (insErr) console.error("[stripe/webhook] credits insert", insErr);
+        }
+
+        const { error: evErr } = await admin.from("pipeline_events").insert({
+          user_id: userId,
+          model_id: null,
+          stage: "payment",
+          event_type: "completed",
+          message: session.id,
+          payload: { details: session.id },
+          request_id: session.id,
+        });
+        if (evErr) console.error("[stripe/webhook] pipeline_events", evErr);
+      }
     }
 
     return NextResponse.json({ received: true }, { status: 200 });

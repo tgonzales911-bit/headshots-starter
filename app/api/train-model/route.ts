@@ -1,5 +1,6 @@
 import { Database } from "@/types/supabase";
 import { buildTrainingZipFromImageUrls } from "@/lib/buildTrainingZip";
+import { deploymentOrigin } from "@/lib/stripePostPaymentTraining";
 import {
   BACKGROUND_OPTION_KEYS,
   UNIFORM_OPTION_KEYS,
@@ -9,11 +10,17 @@ import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import Stripe from "stripe";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 const stripeIsConfigured = process.env.NEXT_PUBLIC_STRIPE_IS_ENABLED === "true";
+const useStripeCheckoutFlow =
+  stripeIsConfigured &&
+  Boolean(process.env.STRIPE_SECRET_KEY?.trim()) &&
+  Boolean(process.env.STRIPE_PRICE_ID_ONE_CREDIT?.trim());
+
 const falKey = process.env.FAL_KEY;
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -71,13 +78,6 @@ export async function POST(request: Request) {
     );
   }
 
-  if (!falKey) {
-    return NextResponse.json(
-      { message: "Missing FAL_KEY: configure Fal.ai to train models" },
-      { status: 500 }
-    );
-  }
-
   if (!supabaseUrl || !supabaseServiceRoleKey) {
     return NextResponse.json(
       { message: "Missing Supabase configuration" },
@@ -99,6 +99,80 @@ export async function POST(request: Request) {
     return NextResponse.json(
       { message: "Upload at least 4 sample images" },
       { status: 400 }
+    );
+  }
+
+  // --- Stripe checkout: create pending model, then send user to pay ---
+  if (useStripeCheckoutFlow) {
+    const priceId = process.env.STRIPE_PRICE_ID_ONE_CREDIT!;
+    const secretKey = process.env.STRIPE_SECRET_KEY!;
+
+    const { error: modelError, data } = await supabase
+      .from("models")
+      .insert({
+        user_id: user.id,
+        name,
+        type,
+        status: "pending_payment",
+        prompt_options: {
+          background: backgroundRaw,
+          uniform: uniformRaw,
+          badge_url,
+          patch_url,
+          brass_url,
+          selfie_urls: images,
+        },
+      })
+      .select("id")
+      .single();
+
+    if (modelError || !data?.id) {
+      console.error("modelError (checkout path): ", modelError);
+      return NextResponse.json(
+        { message: "Something went wrong!" },
+        { status: 500 }
+      );
+    }
+
+    const modelId = data.id;
+    const base = deploymentOrigin().replace(/\/$/, "");
+
+    try {
+      const stripe = new Stripe(secretKey, {
+        apiVersion: "2023-08-16",
+        typescript: true,
+      });
+
+      const checkoutSession = await stripe.checkout.sessions.create({
+        mode: "payment",
+        line_items: [{ price: priceId, quantity: 1 }],
+        success_url: `${base}/api/stripe/verify-and-train?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${base}/overview/models/train`,
+        metadata: {
+          modelId: String(modelId),
+          userId: user.id,
+        },
+      });
+
+      if (!checkoutSession.url) {
+        await supabase.from("models").delete().eq("id", modelId);
+        return NextResponse.json({ message: "Checkout URL missing" }, { status: 500 });
+      }
+
+      return NextResponse.json({ checkoutUrl: checkoutSession.url }, { status: 200 });
+    } catch (e) {
+      console.error("[train-model] Stripe checkout", e);
+      await supabase.from("models").delete().eq("id", modelId);
+      const message = e instanceof Error ? e.message : "Checkout failed";
+      return NextResponse.json({ message }, { status: 500 });
+    }
+  }
+
+  // --- Legacy: pay-with-credits or free path — train immediately ---
+  if (!falKey) {
+    return NextResponse.json(
+      { message: "Missing FAL_KEY: configure Fal.ai to train models" },
+      { status: 500 }
     );
   }
 
