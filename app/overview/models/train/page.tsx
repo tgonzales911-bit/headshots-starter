@@ -23,18 +23,13 @@ export default async function TrainModelPage() {
   } = await supabase.auth.getUser();
 
   const stripeOn = process.env.NEXT_PUBLIC_STRIPE_IS_ENABLED === "true";
-  let hasCredits = true;
+  let hasCredits = false;
   if (stripeOn && user) {
     const { data: creditRow } = await supabase
       .from("credits")
       .select("credits")
       .eq("user_id", user.id)
       .maybeSingle();
-    console.log("[train-page] credits debug", {
-      stripeEnabled: process.env.NEXT_PUBLIC_STRIPE_IS_ENABLED,
-      creditRow: creditRow,
-      hasCredits: hasCredits,
-    });
     hasCredits = (creditRow?.credits ?? 0) > 0;
   }
 
