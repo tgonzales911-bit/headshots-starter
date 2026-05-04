@@ -9,6 +9,21 @@ export type Json =
 export interface Database {
   public: {
     Tables: {
+      admin_settings: {
+        Row: {
+          key: string
+          value: string
+        }
+        Insert: {
+          key: string
+          value: string
+        }
+        Update: {
+          key?: string
+          value?: string
+        }
+        Relationships: []
+      }
       credits: {
         Row: {
           created_at: string
@@ -121,6 +136,8 @@ export interface Database {
           result_image_url: string | null
           status: string
           type: string | null
+          updated_at: string | null
+          user_email: string | null
           user_id: string | null
         }
         Insert: {
@@ -135,6 +152,8 @@ export interface Database {
           result_image_url?: string | null
           status?: string
           type?: string | null
+          updated_at?: string | null
+          user_email?: string | null
           user_id?: string | null
         }
         Update: {
@@ -149,6 +168,8 @@ export interface Database {
           result_image_url?: string | null
           status?: string
           type?: string | null
+          updated_at?: string | null
+          user_email?: string | null
           user_id?: string | null
         }
         Relationships: [
