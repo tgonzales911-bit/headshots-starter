@@ -399,6 +399,17 @@ export default function PortraitOpsDashboard({
   const [qcState, setQcState] = useState<Record<string, boolean>>({});
   const [refreshing, setRefreshing] = useState(false);
   const [modeSaving, setModeSaving] = useState(false);
+  const [deliverUrls, setDeliverUrls] = useState<[string, string, string, string]>([
+    "",
+    "",
+    "",
+    "",
+  ]);
+  const [deliverLoading, setDeliverLoading] = useState(false);
+  const [deliverFeedback, setDeliverFeedback] = useState<{
+    kind: "ok" | "err";
+    text: string;
+  } | null>(null);
 
   const selected = useMemo(
     () => orders.find((o) => o.id === selectedId) ?? null,
@@ -421,6 +432,26 @@ export default function PortraitOpsDashboard({
     }
     setNotesDraft({});
   }, [selectedId]);
+
+  useEffect(() => {
+    if (!selected) return;
+    const fr = selected.promptOptions.final_results;
+    if (
+      Array.isArray(fr) &&
+      fr.length === 4 &&
+      fr.every((u) => typeof u === "string" && u.trim().length > 0)
+    ) {
+      setDeliverUrls([
+        fr[0].trim(),
+        fr[1].trim(),
+        fr[2].trim(),
+        fr[3].trim(),
+      ]);
+    } else {
+      setDeliverUrls(["", "", "", ""]);
+    }
+    setDeliverFeedback(null);
+  }, [selected?.id, selected?.promptOptions.final_results]);
 
   const persistModeApi = useCallback(async (next: OpsMode) => {
     setModeSaving(true);
@@ -455,6 +486,55 @@ export default function PortraitOpsDashboard({
       setRefreshing(false);
     }
   }, []);
+
+  const sendManualDelivery = useCallback(async () => {
+    if (!selected) return;
+    setDeliverLoading(true);
+    setDeliverFeedback(null);
+    try {
+      const res = await fetch("/api/admin/ops/deliver", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          modelId: selected.id,
+          imageUrls: [...deliverUrls],
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        success?: boolean;
+        emailSent?: boolean;
+      };
+      if (!res.ok) {
+        setDeliverFeedback({
+          kind: "err",
+          text:
+            typeof data.error === "string" ? data.error : "Request failed",
+        });
+        return;
+      }
+      if (data.emailSent) {
+        const to = selected.userEmail?.trim() || "customer";
+        setDeliverFeedback({
+          kind: "ok",
+          text: `✓ Email sent to ${to}`,
+        });
+      } else {
+        setDeliverFeedback({
+          kind: "ok",
+          text: "✓ Saved to Supabase. Email was not sent (add Resend and customer email).",
+        });
+      }
+      await refreshOrders();
+    } catch (e) {
+      setDeliverFeedback({
+        kind: "err",
+        text: e instanceof Error ? e.message : "Network error",
+      });
+    } finally {
+      setDeliverLoading(false);
+    }
+  }, [deliverUrls, refreshOrders, selected]);
 
   const updateStep = useCallback(
     (stepNum: number, action: "complete" | "skip" | "reopen") => {
@@ -890,6 +970,59 @@ export default function PortraitOpsDashboard({
                               })}
                             </ul>
                           </div>
+
+                          {def.num === 8 ? (
+                            <div className="space-y-3 rounded-lg border border-amber-500/20 bg-amber-950/10 p-3">
+                              <div className="text-sm font-semibold text-[#c9a84c]">
+                                Deliver to Customer
+                              </div>
+                              {[0, 1, 2, 3].map((i) => (
+                                <label key={i} className="block">
+                                  <span className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-zinc-500">
+                                    Portrait {i + 1} URL
+                                  </span>
+                                  <input
+                                    type="url"
+                                    value={deliverUrls[i]}
+                                    onChange={(e) => {
+                                      const next = [...deliverUrls] as [
+                                        string,
+                                        string,
+                                        string,
+                                        string,
+                                      ];
+                                      next[i] = e.target.value;
+                                      setDeliverUrls(next);
+                                    }}
+                                    className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-[#c9a84c]/50 focus:outline-none"
+                                    placeholder="https://fal.media/files/..."
+                                    autoComplete="off"
+                                  />
+                                </label>
+                              ))}
+                              <button
+                                type="button"
+                                disabled={deliverLoading}
+                                onClick={() => void sendManualDelivery()}
+                                className="rounded-lg border border-amber-500/50 bg-amber-500/20 px-4 py-2 text-xs font-semibold text-amber-100 hover:bg-amber-500/30 disabled:opacity-50"
+                              >
+                                {deliverLoading
+                                  ? "Sending…"
+                                  : "Send Delivery Email"}
+                              </button>
+                              {deliverFeedback ? (
+                                <p
+                                  className={
+                                    deliverFeedback.kind === "ok"
+                                      ? "text-sm text-emerald-400"
+                                      : "text-sm text-red-400"
+                                  }
+                                >
+                                  {deliverFeedback.text}
+                                </p>
+                              ) : null}
+                            </div>
+                          ) : null}
 
                           <label className="block">
                             <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
