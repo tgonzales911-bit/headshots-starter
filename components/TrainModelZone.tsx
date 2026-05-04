@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   Select,
@@ -234,6 +235,17 @@ export default function TrainModelZone() {
     resolver: zodResolver(fileUploadFormSchema),
     defaultValues: {
       name: "",
+      customerName: "",
+      department: "",
+      rank: "",
+      rankDevice: "",
+      badgeNumber: "",
+      brassColor: "Gold / Polished Brass" as const,
+      stripeCount: 1,
+      needsStripes: true,
+      yearsOfService: 0,
+      needsChevrons: false,
+      notes: "",
       type: "man",
       background: "american_flag",
       uniform: "class_a",
@@ -374,23 +386,30 @@ export default function TrainModelZone() {
         blobUrls.push(url);
       }
 
-      const payload = {
-        urls: blobUrls,
-        name: form.getValues("name").trim(),
-        type: form.getValues("type"),
-        background: form.getValues("background"),
-        uniform: form.getValues("uniform"),
-        badge_url,
-        patch_url,
-        brass_url,
-      };
+      const fd = new FormData();
+      fd.append("modelName", form.getValues("name").trim());
+      fd.append("name", form.getValues("customerName").trim());
+      fd.append("department", form.getValues("department").trim());
+      fd.append("rank", form.getValues("rank").trim());
+      fd.append("rankDevice", (form.getValues("rankDevice") ?? "").trim());
+      fd.append("badgeNumber", (form.getValues("badgeNumber") ?? "").trim());
+      fd.append("brassColor", form.getValues("brassColor") ?? "Gold / Polished Brass");
+      fd.append("stripeCount", String(form.getValues("stripeCount")));
+      fd.append("yearsOfService", String(form.getValues("yearsOfService")));
+      fd.append("needsStripes", form.getValues("needsStripes") ? "true" : "false");
+      fd.append("needsChevrons", form.getValues("needsChevrons") ? "true" : "false");
+      fd.append("notes", (form.getValues("notes") ?? "").trim());
+      fd.append("type", form.getValues("type"));
+      fd.append("background", form.getValues("background"));
+      fd.append("uniform", form.getValues("uniform"));
+      fd.append("urls", JSON.stringify(blobUrls));
+      fd.append("badge_url", badge_url);
+      fd.append("patch_url", patch_url);
+      fd.append("brass_url", brass_url);
 
       const response = await fetch("/api/train", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
+        body: fd,
       });
 
       const responseData = (await response.json()) as {
@@ -455,10 +474,16 @@ export default function TrainModelZone() {
 
   const modelType = form.watch("type");
   const nameValue = form.watch("name");
+  const customerNameValue = form.watch("customerName");
+  const departmentValue = form.watch("department");
+  const rankValue = form.watch("rank");
   const canTrain =
     files.length >= 4 &&
     Boolean(badgeFile && patchFile && brassFile) &&
-    Boolean(nameValue?.trim());
+    Boolean(nameValue?.trim()) &&
+    Boolean(customerNameValue?.trim()) &&
+    Boolean(departmentValue?.trim()) &&
+    Boolean(rankValue?.trim());
 
   const dismissTrainingSuccess = useCallback(() => {
     setTrainingSuccessOpen(false);
@@ -516,6 +541,235 @@ export default function TrainModelZone() {
           onSubmit={form.handleSubmit(onSubmit)}
           className="rounded-md flex flex-col gap-8"
         >
+          <div className="flex w-full flex-col gap-6">
+            <div className="space-y-1">
+              <h2 className="text-lg font-semibold tracking-tight">Your Details</h2>
+              <p className="text-sm text-muted-foreground">
+                Customer information used for badge and uniform prompts.
+              </p>
+            </div>
+            <FormField
+              control={form.control}
+              name="customerName"
+              render={({ field }) => (
+                <FormItem className="w-full rounded-md">
+                  <FormLabel>Full Name</FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder="John Smith"
+                      {...field}
+                      className="max-w-screen-sm"
+                      autoComplete="name"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="department"
+              render={({ field }) => (
+                <FormItem className="w-full rounded-md">
+                  <FormLabel>Department Name</FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder="Riverside Fire Department"
+                      {...field}
+                      className="max-w-screen-sm"
+                      autoComplete="organization"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="rank"
+              render={({ field }) => (
+                <FormItem className="w-full rounded-md">
+                  <FormLabel>Rank / Title</FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder="Battalion Chief"
+                      {...field}
+                      className="max-w-screen-sm"
+                      autoComplete="off"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="rankDevice"
+              render={({ field }) => (
+                <FormItem className="w-full rounded-md">
+                  <FormLabel>Rank Collar Device</FormLabel>
+                  <FormDescription>Optional — bugles, crossed axes, etc.</FormDescription>
+                  <FormControl>
+                    <Input
+                      placeholder="Gold bugle, silver cross, etc."
+                      {...field}
+                      className="max-w-screen-sm"
+                      autoComplete="off"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="badgeNumber"
+              render={({ field }) => (
+                <FormItem className="w-full rounded-md">
+                  <FormLabel>Badge Number</FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder="1247"
+                      {...field}
+                      className="max-w-screen-sm"
+                      autoComplete="off"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="brassColor"
+              render={({ field }) => (
+                <FormItem className="w-full rounded-md">
+                  <FormLabel>Collar Brass Color</FormLabel>
+                  <Select onValueChange={field.onChange} value={field.value}>
+                    <FormControl>
+                      <SelectTrigger className="max-w-screen-sm">
+                        <SelectValue placeholder="Select brass finish" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="Gold / Polished Brass">
+                        Gold / Polished Brass
+                      </SelectItem>
+                      <SelectItem value="Silver / Nickel">Silver / Nickel</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
+              <FormField
+                control={form.control}
+                name="stripeCount"
+                render={({ field }) => (
+                  <FormItem className="w-full rounded-md sm:max-w-xs">
+                    <FormLabel>Class A Stripe Count</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={6}
+                        {...field}
+                        className="max-w-screen-sm"
+                        onChange={(e) => {
+                          const n = e.target.valueAsNumber;
+                          field.onChange(Number.isFinite(n) ? n : 0);
+                        }}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="needsStripes"
+                render={({ field }) => (
+                  <FormItem className="flex flex-row items-center gap-2 space-y-0 rounded-md">
+                    <FormControl>
+                      <input
+                        type="checkbox"
+                        checked={field.value}
+                        onChange={field.onChange}
+                        className="h-4 w-4 rounded border-gray-600 bg-background text-primary ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                      />
+                    </FormControl>
+                    <FormLabel className="!mt-0 font-normal">
+                      Include sleeve stripes
+                    </FormLabel>
+                  </FormItem>
+                )}
+              />
+            </div>
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
+              <FormField
+                control={form.control}
+                name="yearsOfService"
+                render={({ field }) => (
+                  <FormItem className="w-full rounded-md sm:max-w-xs">
+                    <FormLabel>Years of Service</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={40}
+                        {...field}
+                        className="max-w-screen-sm"
+                        onChange={(e) => {
+                          const n = e.target.valueAsNumber;
+                          field.onChange(Number.isFinite(n) ? n : 0);
+                        }}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="needsChevrons"
+                render={({ field }) => (
+                  <FormItem className="flex flex-row items-center gap-2 space-y-0 rounded-md">
+                    <FormControl>
+                      <input
+                        type="checkbox"
+                        checked={field.value}
+                        onChange={field.onChange}
+                        className="h-4 w-4 rounded border-gray-600 bg-background text-primary ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                      />
+                    </FormControl>
+                    <FormLabel className="!mt-0 font-normal">
+                      Include service chevrons
+                    </FormLabel>
+                  </FormItem>
+                )}
+              />
+            </div>
+            <FormField
+              control={form.control}
+              name="notes"
+              render={({ field }) => (
+                <FormItem className="w-full rounded-md">
+                  <FormLabel>Special Instructions</FormLabel>
+                  <FormControl>
+                    <Textarea
+                      placeholder="Any special requirements or notes"
+                      {...field}
+                      className="max-w-screen-sm min-h-[88px]"
+                      autoComplete="off"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
+
           <FormField
             control={form.control}
             name="name"

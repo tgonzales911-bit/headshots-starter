@@ -2,20 +2,28 @@
  * Text prompts for Fal flux-lora base generation and Gemini 3 Pro image edit.
  */
 
-/** fal-ai/flux-lora — blank Class A fire department dress uniform; insignia added in a later stage. */
-export function buildFluxBasePrompt(): string {
-  return [
-    "Professional headshot photograph of a person in Class A navy fire department dress uniform:",
-    "dark navy wool jacket, white dress shirt with stiff collar, black tie —",
-    "no insignia, no patches, no badges, no collar brass, no shield, no pins;",
-    "blank unadorned uniform only;",
-    "neutral gray seamless studio backdrop (this background will be replaced later);",
-    "professional portrait composition, 85mm lens, f/2.8, shallow depth of field;",
-    "soft studio key and rim light;",
-    "shot on ISO 800 color film: visible film grain, visible pores, natural skin texture, authentic tones — not plastic, not waxy, not airbrushed;",
-    "subtle real skin imperfections, natural eye catchlights;",
-    "unretouched analog photograph aesthetic, no digital smoothing.",
-  ]
+export type FluxBasePromptContext = {
+  department?: string | null;
+  rank?: string | null;
+};
+
+/** fal-ai/flux-lora — Class A fire service portrait base; insignia added in a later stage. */
+export function buildFluxBasePrompt(ctx?: FluxBasePromptContext): string {
+  const dept = ctx?.department?.trim();
+  const rank = ctx?.rank?.trim();
+
+  const fireClassA =
+    "Subject in Class A navy fire department dress uniform — double-breasted jacket with gold buttons, white shirt, tie. No insignia, no patches, no badges, no collar brass. Neutral gray seamless studio background. Professional headshot composition, 85mm lens, f/2.8. ISO 800 film grain, visible pores, natural skin texture. Not plastic, not waxy, no digital smoothing.";
+
+  const prefix: string[] = [];
+  if (rank) {
+    prefix.push(`Subject role: ${rank}.`);
+  }
+  if (dept) {
+    prefix.push(`Organization / service: ${dept}.`);
+  }
+
+  return [...prefix, fireClassA]
     .join(" ")
     .replace(/\s+/g, " ")
     .trim();

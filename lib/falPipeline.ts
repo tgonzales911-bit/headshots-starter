@@ -278,12 +278,17 @@ export async function submitBaseGeneration(model: PipelineModel): Promise<void> 
   console.log("[falPipeline] submitBaseGeneration start", { modelId, userId });
   const supabase = adminClient();
 
+  const prevPo = asPromptJson(model.prompt_options);
   const triggerPhrase =
     process.env.FAL_TRIGGER_PHRASE?.trim() || buildTriggerPhrase(userId, modelId);
   const envTemplate = process.env.FAL_ASSISTANT_CHIEF_PROMPT_TEMPLATE?.trim();
   const fluxPrompt = envTemplate
     ? envTemplate.replace(/\[TRIGGER_PHRASE\]/g, triggerPhrase)
-    : `${triggerPhrase}, ${buildFluxBasePrompt()}`;
+    : `${triggerPhrase}, ${buildFluxBasePrompt({
+        department:
+          typeof prevPo.department === "string" ? prevPo.department : null,
+        rank: typeof prevPo.rank === "string" ? prevPo.rank : null,
+      })}`;
 
   const webhookUrl = pipelineWebhookUrl(userId, modelId, "base_generation");
 
@@ -300,7 +305,6 @@ export async function submitBaseGeneration(model: PipelineModel): Promise<void> 
     webhookUrl
   );
 
-  const prevPo = asPromptJson(model.prompt_options);
   await supabase
     .from("models")
     .update({

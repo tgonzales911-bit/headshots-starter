@@ -21,24 +21,134 @@ const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const trainingBucket =
   process.env.SUPABASE_TRAINING_DATASETS_BUCKET ?? "training-datasets";
 
+type CustomerProfile = {
+  name: string;
+  department: string;
+  rank: string;
+  rankDevice?: string;
+  badgeNumber?: string;
+  brassColor: string;
+  stripeCount: number;
+  yearsOfService: number;
+  needsStripes: boolean;
+  needsChevrons: boolean;
+  notes?: string;
+};
+
+function profileFromFormData(formData: FormData): CustomerProfile {
+  const name = formData.get("name") as string;
+  const department = formData.get("department") as string;
+  const rank = formData.get("rank") as string;
+  const rankDevice = formData.get("rankDevice") as string;
+  const badgeNumber = formData.get("badgeNumber") as string;
+  const brassColor = formData.get("brassColor") as string;
+  const stripeCount = parseInt(formData.get("stripeCount") as string, 10) || 1;
+  const yearsOfService = parseInt(formData.get("yearsOfService") as string, 10) || 0;
+  const needsStripes = formData.get("needsStripes") === "true";
+  const needsChevrons = formData.get("needsChevrons") === "true";
+  const notes = formData.get("notes") as string;
+
+  return {
+    name: (name ?? "").trim(),
+    department: (department ?? "").trim(),
+    rank: (rank ?? "").trim(),
+    rankDevice: (rankDevice ?? "").trim() || undefined,
+    badgeNumber: (badgeNumber ?? "").trim() || undefined,
+    brassColor: (brassColor ?? "Gold / Polished Brass").trim() || "Gold / Polished Brass",
+    stripeCount,
+    yearsOfService,
+    needsStripes,
+    needsChevrons,
+    notes: (notes ?? "").trim() || undefined,
+  };
+}
+
+function profileFromJsonPayload(payload: Record<string, unknown>): CustomerProfile {
+  const stripeRaw = payload.stripeCount;
+  const yosRaw = payload.yearsOfService;
+  const stripeCount =
+    typeof stripeRaw === "number" && Number.isFinite(stripeRaw)
+      ? stripeRaw
+      : parseInt(String(stripeRaw ?? "1"), 10) || 1;
+  const yearsOfService =
+    typeof yosRaw === "number" && Number.isFinite(yosRaw)
+      ? yosRaw
+      : parseInt(String(yosRaw ?? "0"), 10) || 0;
+
+  return {
+    name: String(payload.customerName ?? "").trim(),
+    department: String(payload.department ?? "").trim(),
+    rank: String(payload.rank ?? "").trim(),
+    rankDevice: String(payload.rankDevice ?? "").trim() || undefined,
+    badgeNumber: String(payload.badgeNumber ?? "").trim() || undefined,
+    brassColor:
+      String(payload.brassColor ?? "Gold / Polished Brass").trim() ||
+      "Gold / Polished Brass",
+    stripeCount,
+    yearsOfService,
+    needsStripes: payload.needsStripes === true || payload.needsStripes === "true",
+    needsChevrons: payload.needsChevrons === true || payload.needsChevrons === "true",
+    notes: String(payload.notes ?? "").trim() || undefined,
+  };
+}
+
 export async function POST(request: Request) {
-  const payload = await request.json();
   const stripeIsConfigured = process.env.NEXT_PUBLIC_STRIPE_IS_ENABLED === "true";
   const useStripeCheckoutFlow =
     !!process.env.STRIPE_SECRET_KEY && !!process.env.STRIPE_PRICE_ID_ONE_CREDIT;
-  const images = payload.urls as string[];
-  const name = payload.name as string;
-  const type = payload.type as string;
-  const backgroundRaw =
-    typeof payload.background === "string" ? payload.background.trim().toLowerCase() : "";
-  const uniformRaw =
-    typeof payload.uniform === "string" ? payload.uniform.trim().toLowerCase() : "";
-  const badge_url =
-    typeof payload.badge_url === "string" ? payload.badge_url.trim() : "";
-  const patch_url =
-    typeof payload.patch_url === "string" ? payload.patch_url.trim() : "";
-  const brass_url =
-    typeof payload.brass_url === "string" ? payload.brass_url.trim() : "";
+
+  const contentType = request.headers.get("content-type") ?? "";
+  let images: string[];
+  let modelName: string;
+  let type: string;
+  let backgroundRaw: string;
+  let uniformRaw: string;
+  let badge_url: string;
+  let patch_url: string;
+  let brass_url: string;
+  let customerProfile: CustomerProfile;
+  let isMultipart = false;
+
+  if (contentType.includes("multipart/form-data")) {
+    isMultipart = true;
+    const formData = await request.formData();
+    const urlsRaw = formData.get("urls");
+    try {
+      const parsed =
+        typeof urlsRaw === "string" ? JSON.parse(urlsRaw) : [];
+      images = Array.isArray(parsed) ? parsed : [];
+    } catch {
+      images = [];
+    }
+    modelName = String(formData.get("modelName") ?? "").trim();
+    type = String(formData.get("type") ?? "").trim();
+    backgroundRaw = String(formData.get("background") ?? "")
+      .trim()
+      .toLowerCase();
+    uniformRaw = String(formData.get("uniform") ?? "").trim().toLowerCase();
+    badge_url = String(formData.get("badge_url") ?? "").trim();
+    patch_url = String(formData.get("patch_url") ?? "").trim();
+    brass_url = String(formData.get("brass_url") ?? "").trim();
+    customerProfile = profileFromFormData(formData);
+  } else {
+    const payload = (await request.json()) as Record<string, unknown>;
+    images = (payload.urls as string[]) ?? [];
+    modelName = String(payload.modelName ?? payload.name ?? "").trim();
+    type = String(payload.type ?? "").trim();
+    backgroundRaw =
+      typeof payload.background === "string"
+        ? payload.background.trim().toLowerCase()
+        : "";
+    uniformRaw =
+      typeof payload.uniform === "string" ? payload.uniform.trim().toLowerCase() : "";
+    badge_url =
+      typeof payload.badge_url === "string" ? payload.badge_url.trim() : "";
+    patch_url =
+      typeof payload.patch_url === "string" ? payload.patch_url.trim() : "";
+    brass_url =
+      typeof payload.brass_url === "string" ? payload.brass_url.trim() : "";
+    customerProfile = profileFromJsonPayload(payload);
+  }
 
   function isHttpUrl(s: string): boolean {
     try {
@@ -99,6 +209,30 @@ export async function POST(request: Request) {
     );
   }
 
+  if (isMultipart) {
+    if (!modelName) {
+      return NextResponse.json(
+        { message: "Model name is required" },
+        { status: 400 }
+      );
+    }
+    if (!customerProfile.name || !customerProfile.department || !customerProfile.rank) {
+      return NextResponse.json(
+        { message: "Full name, department, and rank are required" },
+        { status: 400 }
+      );
+    }
+    if (
+      customerProfile.brassColor !== "Gold / Polished Brass" &&
+      customerProfile.brassColor !== "Silver / Nickel"
+    ) {
+      return NextResponse.json(
+        { message: "Invalid collar brass color" },
+        { status: 400 }
+      );
+    }
+  }
+
   // --- Stripe checkout: create pending model, then send user to pay ---
   if (useStripeCheckoutFlow) {
     const priceId = process.env.STRIPE_PRICE_ID_ONE_CREDIT!;
@@ -108,7 +242,7 @@ export async function POST(request: Request) {
       .from("models")
       .insert({
         user_id: user.id,
-        name,
+        name: modelName,
         type,
         status: "pending_payment",
         prompt_options: {
@@ -118,6 +252,17 @@ export async function POST(request: Request) {
           patch_url,
           brass_url,
           selfie_urls: images,
+          name: customerProfile.name,
+          department: customerProfile.department,
+          rank: customerProfile.rank,
+          rankDevice: customerProfile.rankDevice,
+          badgeNumber: customerProfile.badgeNumber,
+          brassColor: customerProfile.brassColor,
+          stripeCount: customerProfile.stripeCount,
+          yearsOfService: customerProfile.yearsOfService,
+          needsStripes: customerProfile.needsStripes,
+          needsChevrons: customerProfile.needsChevrons,
+          notes: customerProfile.notes,
         },
       })
       .select("id")
@@ -228,7 +373,7 @@ export async function POST(request: Request) {
     .from("models")
     .insert({
       user_id: user.id,
-      name,
+      name: modelName,
       type,
       prompt_options: {
         background: backgroundRaw,
@@ -236,6 +381,17 @@ export async function POST(request: Request) {
         badge_url,
         patch_url,
         brass_url,
+        name: customerProfile.name,
+        department: customerProfile.department,
+        rank: customerProfile.rank,
+        rankDevice: customerProfile.rankDevice,
+        badgeNumber: customerProfile.badgeNumber,
+        brassColor: customerProfile.brassColor,
+        stripeCount: customerProfile.stripeCount,
+        yearsOfService: customerProfile.yearsOfService,
+        needsStripes: customerProfile.needsStripes,
+        needsChevrons: customerProfile.needsChevrons,
+        notes: customerProfile.notes,
       },
     })
     .select("id")
