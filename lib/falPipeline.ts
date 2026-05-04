@@ -297,7 +297,7 @@ export async function submitBaseGeneration(model: PipelineModel): Promise<void> 
     {
       prompt: fluxPrompt,
       num_images: PARALLEL,
-      image_size: "portrait_4_3",
+      image_size: "portrait_2_3",
       loras: [{ path: weightsUrl, scale: 1.0 }],
       guidance_scale: 3.5,
       num_inference_steps: 28,
