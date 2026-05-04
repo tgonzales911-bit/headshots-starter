@@ -46,7 +46,7 @@ const STEP_DEFS = [
   {
     num: 1,
     title: "Base Portrait Gen",
-    tool: "FLUX LoRA",
+    tool: "FLUX LoRA — requires completed LoRA training first",
     url: "https://fal.ai/models/fal-ai/flux-lora",
   },
   {
@@ -144,21 +144,23 @@ function buildStepPrompt(
   switch (stepNum) {
     case 1:
       return [
-        `Professional law-enforcement portrait for ${c.name}.`,
-        `Department: ${c.department}. Rank: ${c.rank}. Rank device: ${c.rankDevice}.`,
-        `Badge number ${c.badgeNumber}. Years of service: ${c.yearsOfService}.`,
-        `Brass color reference: ${c.brassColor}.`,
-        `Lighting: soft studio key, neutral background, badge and collar visible, natural skin tones.`,
-        c.notes ? `Customer notes: ${c.notes}` : "",
-      ]
-        .filter(Boolean)
-        .join("\n");
+        "LoRA training is handled automatically by TrainModelZone before this manual workflow begins.",
+        "",
+        "For manual orders where no LoRA exists yet, go to:",
+        "New Manual Order → complete TrainModelZone upload first,",
+        "then return here for the image generation steps.",
+        "",
+        "If LoRA weights already exist for this order, use the weights_url from the model record and submit to:",
+        "fal-ai/flux-lora with the trained weights URL,",
+        "num_images: 4, guidance_scale: 3.5,",
+        "num_inference_steps: 28, image_size: portrait_4_3",
+      ].join("\n");
     case 2:
       return [
         `Badge composite for ${c.name} (${c.department}).`,
         `Integrate badge ID ${c.badgeNumber} with correct brass tone ${c.brassColor}.`,
         `Rank context: ${c.rank} / ${c.rankDevice}.`,
-        `Ensure legibility and alignment with uniform collar.`,
+        `Ensure legibility and alignment with the fire department Class A dress uniform collar.`,
         c.notes ? `Notes: ${c.notes}` : "",
       ]
         .filter(Boolean)
@@ -202,17 +204,17 @@ function buildStepPrompt(
         .join("\n");
     case 7:
       return [
-        `Upscale and sharpen final portrait for ${c.name}.`,
+        `Upscale and sharpen final fire service portrait for ${c.name}.`,
         `Preserve badge ${c.badgeNumber} detail and collar brass (${c.brassColor}).`,
-        `Output print-ready, minimal halos, faithful rank insignia.`,
+        `Output print-ready, minimal halos, faithful fire service rank insignia.`,
         c.notes ? `Notes: ${c.notes}` : "",
       ]
         .filter(Boolean)
         .join("\n");
     case 8:
       return [
-        `Final QC & delivery for ${c.name} (${c.department}).`,
-        `Verify badge ${c.badgeNumber}, brass ${c.brassColor}, stripes/chevrons per brief.`,
+        `Final QC & delivery for ${c.name} (${c.department}) — fire service Class A portrait.`,
+        `Verify badge ${c.badgeNumber}, brass ${c.brassColor}, stripes/chevrons per fire service brief.`,
         `Confirm customer notes addressed: ${c.notes || "(none)"}.`,
       ].join("\n");
     default:
@@ -890,10 +892,19 @@ export default function PortraitOpsDashboard({
                         <span className="text-xs font-medium text-zinc-500">
                           {def.num.toString().padStart(2, "0")}
                         </span>
-                        <span className="flex-1 text-sm font-medium text-zinc-100">
-                          {def.title}
+                        <span className="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+                          <span className="text-sm font-medium text-zinc-100">
+                            {def.title}
+                          </span>
+                          {def.num === 1 ? (
+                            <span className="w-fit shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium leading-tight text-amber-200 ring-1 ring-amber-500/40">
+                              {
+                                "Training must be completed via TrainModelZone before this step"
+                              }
+                            </span>
+                          ) : null}
                         </span>
-                        <span className="text-[10px] uppercase text-zinc-500">
+                        <span className="shrink-0 text-[10px] uppercase text-zinc-500">
                           {st}
                         </span>
                       </button>
