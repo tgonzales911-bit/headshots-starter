@@ -106,6 +106,7 @@ export async function POST(request: Request) {
   let badge_url: string;
   let patch_url: string;
   let brass_url: string;
+  let jacket_url: string;
   let customerProfile: CustomerProfile;
   let isMultipart = false;
 
@@ -129,6 +130,7 @@ export async function POST(request: Request) {
     badge_url = String(formData.get("badge_url") ?? "").trim();
     patch_url = String(formData.get("patch_url") ?? "").trim();
     brass_url = String(formData.get("brass_url") ?? "").trim();
+    jacket_url = String(formData.get("jacket_url") ?? "").trim();
     customerProfile = profileFromFormData(formData);
   } else {
     const payload = (await request.json()) as Record<string, unknown>;
@@ -147,6 +149,8 @@ export async function POST(request: Request) {
       typeof payload.patch_url === "string" ? payload.patch_url.trim() : "";
     brass_url =
       typeof payload.brass_url === "string" ? payload.brass_url.trim() : "";
+    jacket_url =
+      typeof payload.jacket_url === "string" ? payload.jacket_url.trim() : "";
     customerProfile = profileFromJsonPayload(payload);
   }
 
@@ -168,6 +172,12 @@ export async function POST(request: Request) {
   if (!isHttpUrl(badge_url) || !isHttpUrl(patch_url) || !isHttpUrl(brass_url)) {
     return NextResponse.json(
       { message: "Reference URLs must be valid http(s) URLs" },
+      { status: 400 }
+    );
+  }
+  if (jacket_url && !isHttpUrl(jacket_url)) {
+    return NextResponse.json(
+      { message: "jacket_url must be a valid http(s) URL" },
       { status: 400 }
     );
   }
@@ -251,6 +261,7 @@ export async function POST(request: Request) {
           badge_url,
           patch_url,
           brass_url,
+          jacket_url: jacket_url || undefined,
           selfie_urls: images,
           name: customerProfile.name,
           department: customerProfile.department,
@@ -381,6 +392,7 @@ export async function POST(request: Request) {
         badge_url,
         patch_url,
         brass_url,
+        jacket_url: jacket_url || undefined,
         name: customerProfile.name,
         department: customerProfile.department,
         rank: customerProfile.rank,

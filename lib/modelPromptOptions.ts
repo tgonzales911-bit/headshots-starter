@@ -7,6 +7,7 @@ export type ModelPromptOptions = {
   badge_url?: string;
   patch_url?: string;
   brass_url?: string;
+  jacket_url?: string;
 };
 
 export function parseModelPromptOptions(raw: unknown): ModelPromptOptions {
@@ -34,7 +35,11 @@ export function parseModelPromptOptions(raw: unknown): ModelPromptOptions {
     typeof o.brass_url === "string" && o.brass_url.trim()
       ? o.brass_url.trim()
       : undefined;
-  return { background, uniform, badge_url, patch_url, brass_url };
+  const jacket_url =
+    typeof o.jacket_url === "string" && o.jacket_url.trim()
+      ? o.jacket_url.trim()
+      : undefined;
+  return { background, uniform, badge_url, patch_url, brass_url, jacket_url };
 }
 
 export function hasRefinementReferenceUrls(po: ModelPromptOptions): boolean {

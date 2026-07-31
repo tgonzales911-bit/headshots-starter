@@ -363,13 +363,15 @@ export async function submitFinalEditStage(model: PipelineModel): Promise<void> 
   const badgeUrl = po.badge_url?.trim();
   const patchUrl = po.patch_url?.trim();
   const brassUrl = po.brass_url?.trim();
+  const jacketUrl = po.jacket_url?.trim();
   if (!badgeUrl || !patchUrl || !brassUrl) {
     console.error("[falPipeline] submitFinalEditStage: missing reference URLs", { modelId });
     await failModel(supabase, modelId, userId, "Final edit: badge_url, patch_url, and brass_url are required.");
     return;
   }
 
-  const prompt = buildGeminiEditPrompt();
+  const prompt = buildGeminiEditPrompt({ hasJacket: Boolean(jacketUrl) });
+  const referenceUrls = [badgeUrl, patchUrl, brassUrl, ...(jacketUrl ? [jacketUrl] : [])];
   const slice = portraitUrls.slice(0, PARALLEL);
 
   const requestIds = await Promise.all(
@@ -378,7 +380,7 @@ export async function submitFinalEditStage(model: PipelineModel): Promise<void> 
         env.geminiEditModel,
         {
           prompt,
-          image_urls: [portraitUrl, badgeUrl, patchUrl, brassUrl],
+          image_urls: [portraitUrl, ...referenceUrls],
         },
         pipelineWebhookUrl(userId, modelId, "final_edit", index)
       )

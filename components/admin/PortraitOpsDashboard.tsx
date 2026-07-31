@@ -22,6 +22,7 @@ export interface Order {
     badge_url?: string;
     patch_url?: string;
     brass_url?: string;
+    jacket_url?: string;
     base_image_urls?: string[];
     final_results?: string[];
   };
@@ -161,6 +162,7 @@ function buildStepPrompt(
         `Integrate badge ID ${c.badgeNumber} with correct brass tone ${c.brassColor}.`,
         `Rank context: ${c.rank} / ${c.rankDevice}.`,
         `Ensure legibility and alignment with the fire department Class A dress uniform collar.`,
+        po.badge_url ? `Badge reference image (attach to the edit request): ${po.badge_url}` : "",
         c.notes ? `Notes: ${c.notes}` : "",
       ]
         .filter(Boolean)
@@ -170,6 +172,7 @@ function buildStepPrompt(
         `Department patch placement for ${c.name}.`,
         `Department: ${c.department}. Rank: ${c.rank}.`,
         `Patch should match supplied patch asset and sit flush on shoulder/sleeve per policy.`,
+        po.patch_url ? `Patch reference image (attach to the edit request): ${po.patch_url}` : "",
         c.notes ? `Notes: ${c.notes}` : "",
       ]
         .filter(Boolean)
@@ -179,6 +182,8 @@ function buildStepPrompt(
         `Collar brass rendering for ${c.name}.`,
         `Brass color: ${c.brassColor}. Badge #: ${c.badgeNumber}.`,
         `Rank: ${c.rank}. Ensure collar brass matches reference metal finish.`,
+        po.brass_url ? `Brass reference image (attach to the edit request): ${po.brass_url}` : "",
+        po.jacket_url ? `Jacket reference image (match jacket cut/buttons): ${po.jacket_url}` : "",
         c.notes ? `Notes: ${c.notes}` : "",
       ]
         .filter(Boolean)
@@ -363,6 +368,8 @@ function normalizeOrdersFromApi(payload: unknown): Order[] {
           typeof poRaw?.patch_url === "string" ? poRaw.patch_url : undefined,
         brass_url:
           typeof poRaw?.brass_url === "string" ? poRaw.brass_url : undefined,
+        jacket_url:
+          typeof poRaw?.jacket_url === "string" ? poRaw.jacket_url : undefined,
         base_image_urls: Array.isArray(poRaw?.base_image_urls)
           ? (poRaw?.base_image_urls as unknown[]).filter(
               (x): x is string => typeof x === "string"

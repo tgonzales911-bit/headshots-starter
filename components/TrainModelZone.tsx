@@ -225,6 +225,7 @@ export default function TrainModelZone() {
   const [badgeFile, setBadgeFile] = useState<File | null>(null);
   const [patchFile, setPatchFile] = useState<File | null>(null);
   const [brassFile, setBrassFile] = useState<File | null>(null);
+  const [jacketFile, setJacketFile] = useState<File | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [trainingSuccessOpen, setTrainingSuccessOpen] = useState(false);
   const [trainingProgressKey, setTrainingProgressKey] = useState(0);
@@ -378,6 +379,12 @@ export default function TrainModelZone() {
         return;
       }
 
+      let jacket_url: string | null = null;
+      if (jacketFile) {
+        jacket_url = await uploadTrainingImage(jacketFile);
+        if (!jacket_url) return;
+      }
+
       const blobUrls: string[] = [];
 
       for (const file of files) {
@@ -406,6 +413,9 @@ export default function TrainModelZone() {
       fd.append("badge_url", badge_url);
       fd.append("patch_url", patch_url);
       fd.append("brass_url", brass_url);
+      if (jacket_url) {
+        fd.append("jacket_url", jacket_url);
+      }
 
       const response = await fetch("/api/train", {
         method: "POST",
@@ -456,6 +466,7 @@ export default function TrainModelZone() {
     brassFile,
     files,
     form,
+    jacketFile,
     patchFile,
     toast,
     uploadTrainingImage,
@@ -929,6 +940,12 @@ export default function TrainModelZone() {
               description="Photo of your collar brass or bugles — close up, well lit"
               file={brassFile}
               onFile={setBrassFile}
+            />
+            <ReferenceDropzone
+              title="Class A Jacket (optional)"
+              description="Photo of your Class A jacket — front, on a hanger or laid flat. If skipped, we render a standard navy double-breasted jacket."
+              file={jacketFile}
+              onFile={setJacketFile}
             />
           </div>
           <div
