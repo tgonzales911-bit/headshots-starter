@@ -1,7 +1,7 @@
 import { PARALLEL_IMAGE_COUNT } from "@/lib/constants";
 import {
-  deliverResults,
   handleFalPipeline,
+  judgeAndDeliver,
   submitFinalEditStage,
   type OrchestratorContext,
 } from "@/lib/falPipeline";
@@ -365,7 +365,9 @@ export async function POST(request: Request) {
     }
 
     const pipelineComplete =
-      modelForMerge.status === "finished" || modelForMerge.status === "complete";
+      modelForMerge.status === "finished" ||
+      modelForMerge.status === "complete" ||
+      modelForMerge.status === "needs_review";
     if (pipelineComplete) {
       console.log(
         "[pipeline-webhook] final_edit webhook received after completion, ignoring",
@@ -422,8 +424,8 @@ export async function POST(request: Request) {
         }
 
         if (finalUrls.length >= PARALLEL) {
-          console.log("[pipeline-webhook] deliverResults", { modelId, count: finalUrls.length });
-          await deliverResults(modelForDelivery, finalUrls.slice(0, PARALLEL));
+          console.log("[pipeline-webhook] judgeAndDeliver", { modelId, count: finalUrls.length });
+          await judgeAndDeliver(modelForDelivery, finalUrls.slice(0, PARALLEL));
         } else {
           console.error("[pipeline-webhook] incomplete final URLs after merge", {
             modelId,

@@ -1,0 +1,201 @@
+/**
+ * Judge node — Gemini text+vision QC scoring of the 4 final outputs before delivery.
+ *
+ * Scores each output 1-10 on face_match (vs training selfies), badge_match and
+ * brass_match (vs the customer's reference photos), and background_consistency
+ * (vs the other three outputs). Fail-open by design: any error returns null and
+ * the caller delivers unjudged rather than stranding a paid order.
+ */
+
+export const JUDGE_THRESHOLD = 7;
+
+export type JudgeMetric = {
+  score: number;
+  reason: string;
+};
+
+export type JudgeScore = {
+  index: number;
+  face_match: JudgeMetric;
+  badge_match: JudgeMetric;
+  brass_match: JudgeMetric;
+  background_consistency: JudgeMetric;
+};
+
+const METRIC_KEYS = [
+  "face_match",
+  "badge_match",
+  "brass_match",
+  "background_consistency",
+] as const;
+
+export function failingIndices(scores: JudgeScore[]): number[] {
+  return scores
+    .filter((s) =>
+      METRIC_KEYS.some((k) => s[k].score < JUDGE_THRESHOLD)
+    )
+    .map((s) => s.index);
+}
+
+type GeminiPart =
+  | { text: string }
+  | { inline_data: { mime_type: string; data: string } };
+
+async function fetchImagePart(url: string): Promise<GeminiPart | null> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const mime = res.headers.get("content-type")?.split(";")[0]?.trim() || "image/jpeg";
+    if (!mime.startsWith("image/")) return null;
+    const buf = Buffer.from(await res.arrayBuffer());
+    return { inline_data: { mime_type: mime, data: buf.toString("base64") } };
+  } catch (e) {
+    console.error("[judgeNode] failed to fetch image", { url: url.slice(0, 80), e });
+    return null;
+  }
+}
+
+function judgeInstructions(outputCount: number, selfieCount: number): string {
+  return [
+    `You are a strict photo QC judge for BadgeShot, a service producing official Class A fire service portraits.`,
+    `You will be shown ${outputCount} OUTPUT images, ${selfieCount} TRAINING SELFIE images of the real customer, a BADGE REFERENCE photo of the customer's real badge, and a BRASS REFERENCE photo of the customer's real collar brass.`,
+    `Score EVERY output image on these four metrics, each an integer 1-10 with a one-line reason:`,
+    `- face_match: does the person in the output look like the SAME person as in the training selfies? 10 = unmistakably the same person; below 7 = reads as a different person.`,
+    `- badge_match: does the chest badge in the output reproduce the badge reference (shape, text, finish)? Below 7 = wrong or invented badge.`,
+    `- brass_match: does the collar brass in the output reproduce the brass reference (device, finish, both collar points, proportional size)? Below 7 = wrong, missing, or oversized brass.`,
+    `- background_consistency: is the background treatment (flag, drape, scale, lighting) consistent with the OTHER output images in this set? 10 = indistinguishable treatment; below 7 = clearly different backdrop.`,
+    `Be strict: 7 is the delivery threshold.`,
+    `Respond with ONLY a JSON array of exactly ${outputCount} objects, one per output in order, shaped:`,
+    `[{"index":0,"face_match":{"score":9,"reason":"..."},"badge_match":{"score":8,"reason":"..."},"brass_match":{"score":7,"reason":"..."},"background_consistency":{"score":9,"reason":"..."}}, ...]`,
+  ].join("\n");
+}
+
+function parseMetric(raw: unknown): JudgeMetric | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const scoreRaw = o.score;
+  const n =
+    typeof scoreRaw === "number" ? scoreRaw : parseInt(String(scoreRaw ?? ""), 10);
+  if (!Number.isFinite(n)) return null;
+  const score = Math.max(1, Math.min(10, Math.round(n)));
+  const reason = typeof o.reason === "string" ? o.reason.slice(0, 300) : "";
+  return { score, reason };
+}
+
+function parseScores(text: string, expected: number): JudgeScore[] | null {
+  let jsonText = text.trim();
+  const fence = jsonText.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence) jsonText = fence[1].trim();
+  const start = jsonText.indexOf("[");
+  const end = jsonText.lastIndexOf("]");
+  if (start === -1 || end === -1 || end <= start) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonText.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed) || parsed.length < expected) return null;
+
+  const out: JudgeScore[] = [];
+  for (let i = 0; i < expected; i++) {
+    const row = parsed[i];
+    if (!row || typeof row !== "object") return null;
+    const r = row as Record<string, unknown>;
+    const face_match = parseMetric(r.face_match);
+    const badge_match = parseMetric(r.badge_match);
+    const brass_match = parseMetric(r.brass_match);
+    const background_consistency = parseMetric(r.background_consistency);
+    if (!face_match || !badge_match || !brass_match || !background_consistency) {
+      return null;
+    }
+    out.push({ index: i, face_match, badge_match, brass_match, background_consistency });
+  }
+  return out;
+}
+
+export async function runJudge(args: {
+  outputUrls: string[];
+  selfieUrls: string[];
+  badgeUrl?: string;
+  brassUrl?: string;
+}): Promise<JudgeScore[] | null> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    console.warn("[judgeNode] GEMINI_API_KEY not set — skipping judge");
+    return null;
+  }
+  const model = process.env.GEMINI_JUDGE_MODEL?.trim() || "gemini-3-flash";
+
+  const outputParts: GeminiPart[] = [];
+  for (let i = 0; i < args.outputUrls.length; i++) {
+    const part = await fetchImagePart(args.outputUrls[i]);
+    if (!part) {
+      console.error("[judgeNode] could not fetch output image", { index: i });
+      return null;
+    }
+    outputParts.push({ text: `OUTPUT ${i}:` }, part);
+  }
+
+  const selfieParts: GeminiPart[] = [];
+  for (let i = 0; i < args.selfieUrls.length; i++) {
+    const part = await fetchImagePart(args.selfieUrls[i]);
+    if (part) selfieParts.push({ text: `TRAINING SELFIE ${i}:` }, part);
+  }
+
+  const refParts: GeminiPart[] = [];
+  if (args.badgeUrl) {
+    const part = await fetchImagePart(args.badgeUrl);
+    if (part) refParts.push({ text: "BADGE REFERENCE:" }, part);
+  }
+  if (args.brassUrl) {
+    const part = await fetchImagePart(args.brassUrl);
+    if (part) refParts.push({ text: "BRASS REFERENCE:" }, part);
+  }
+
+  const selfieCount = selfieParts.length / 2;
+  const parts: GeminiPart[] = [
+    { text: judgeInstructions(args.outputUrls.length, selfieCount) },
+    ...outputParts,
+    ...selfieParts,
+    ...refParts,
+  ];
+
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts }],
+        generationConfig: {
+          temperature: 0,
+          response_mime_type: "application/json",
+        },
+      }),
+    }
+  );
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    console.error("[judgeNode] Gemini API error", { status: res.status, errText: errText.slice(0, 500) });
+    return null;
+  }
+
+  const body = (await res.json()) as {
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+  };
+  const text = (body.candidates?.[0]?.content?.parts ?? [])
+    .map((p) => p.text ?? "")
+    .join("");
+  if (!text.trim()) {
+    console.error("[judgeNode] empty judge response");
+    return null;
+  }
+
+  const scores = parseScores(text, args.outputUrls.length);
+  if (!scores) {
+    console.error("[judgeNode] could not parse judge response", { text: text.slice(0, 500) });
+  }
+  return scores;
+}

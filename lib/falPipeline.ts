@@ -1,4 +1,10 @@
 import { PARALLEL_IMAGE_COUNT, backdropReferenceUrl } from "@/lib/constants";
+import {
+  failingIndices,
+  JUDGE_THRESHOLD,
+  runJudge,
+  type JudgeScore,
+} from "@/lib/judgeNode";
 import { parseModelPromptOptions } from "@/lib/modelPromptOptions";
 import { buildFluxBasePrompt, buildGeminiEditPrompt } from "@/lib/promptMapping";
 import { Database, Json } from "@/types/supabase";
@@ -420,6 +426,193 @@ export async function submitFinalEditStage(model: PipelineModel): Promise<void> 
     payload: { modelId, stage: "final_edit", requestIds },
   });
   console.log("[falPipeline] submitFinalEditStage done", { modelId, requestIds });
+}
+
+/**
+ * STAGE 3.5 — Judge node: score the 4 finals before delivery.
+ * Round 0: any metric < 7 triggers ONE re-edit of the failing images.
+ * Round 1: still failing → flag the order for manual review, no auto-delivery.
+ * Judge unavailable/error → fail open and deliver (never strand a paid order).
+ */
+export async function judgeAndDeliver(model: PipelineModel, finalUrls: string[]): Promise<void> {
+  const userId = model.user_id;
+  if (!userId) {
+    console.error("[falPipeline] judgeAndDeliver: missing user_id", { modelId: model.id });
+    return;
+  }
+  const modelId = model.id;
+  const supabase = adminClient();
+  const prev = asPromptJson(model.prompt_options);
+  const po = parseModelPromptOptions(model.prompt_options);
+  const round = typeof prev.judge_round === "number" ? prev.judge_round : 0;
+
+  const selfieUrls = (Array.isArray(prev.selfie_urls) ? prev.selfie_urls : [])
+    .filter((s): s is string => typeof s === "string" && s.length > 0)
+    .slice(0, 3);
+
+  let scores: JudgeScore[] | null = null;
+  try {
+    scores = await runJudge({
+      outputUrls: finalUrls,
+      selfieUrls,
+      badgeUrl: po.badge_url,
+      brassUrl: po.brass_url,
+    });
+  } catch (e) {
+    console.error("[falPipeline] judge threw", { modelId, e });
+  }
+
+  if (!scores) {
+    await logEvent(supabase, {
+      userId,
+      modelId,
+      stage: "judge",
+      eventType: "judge_skipped",
+      message: "Judge unavailable — delivering without QC scores",
+      payload: { round: round + 1 },
+    });
+    await deliverResults(model, finalUrls);
+    return;
+  }
+
+  await logEvent(supabase, {
+    userId,
+    modelId,
+    stage: "judge",
+    eventType: "scores",
+    message: `Judge round ${round + 1}: scored ${finalUrls.length} outputs`,
+    payload: { round: round + 1, threshold: JUDGE_THRESHOLD, scores } as unknown as Record<string, unknown>,
+  });
+
+  const failing = failingIndices(scores);
+  if (failing.length === 0) {
+    await deliverResults(model, finalUrls);
+    return;
+  }
+
+  if (round >= 1) {
+    await supabase
+      .from("models")
+      .update({
+        status: "needs_review",
+        prompt_options: {
+          ...prev,
+          judge_scores_final: scores,
+        } as unknown as Json,
+      })
+      .eq("id", modelId)
+      .eq("user_id", userId);
+    await logEvent(supabase, {
+      userId,
+      modelId,
+      stage: "judge",
+      eventType: "needs_review",
+      message: `Judge: ${failing.length} image(s) still below ${JUDGE_THRESHOLD} after re-edit — order flagged for manual review`,
+      payload: { failing, scores } as unknown as Record<string, unknown>,
+    });
+    return;
+  }
+
+  await logEvent(supabase, {
+    userId,
+    modelId,
+    stage: "judge",
+    eventType: "re_edit",
+    message: `Judge: re-editing ${failing.length} image(s) below ${JUDGE_THRESHOLD} (indices ${failing.join(", ")})`,
+    payload: { failing, scores } as unknown as Record<string, unknown>,
+  });
+  await resubmitFinalEditForIndices(model, failing, scores);
+}
+
+/**
+ * Re-run the Gemini edit for specific output indices only (judge round 2 path).
+ * Clears the failing result slots so the webhook completion logic waits for
+ * every re-edit before judging again.
+ */
+async function resubmitFinalEditForIndices(
+  model: PipelineModel,
+  indices: number[],
+  round1Scores: JudgeScore[]
+): Promise<void> {
+  const userId = model.user_id!;
+  const modelId = model.id;
+  const supabase = adminClient();
+  const prev = asPromptJson(model.prompt_options);
+  const po = parseModelPromptOptions(model.prompt_options);
+
+  const rawBase = prev.base_image_urls;
+  const portraitUrls = (Array.isArray(rawBase) ? rawBase : [])
+    .map((u) => (typeof u === "string" ? u.trim() : ""))
+    .filter(Boolean);
+
+  const badgeUrl = po.badge_url?.trim();
+  const patchUrl = po.patch_url?.trim();
+  const brassUrl = po.brass_url?.trim();
+  const jacketUrl = po.jacket_url?.trim();
+  if (!badgeUrl || !patchUrl || !brassUrl || portraitUrls.length < PARALLEL) {
+    console.error("[falPipeline] resubmitFinalEditForIndices: missing inputs — delivering as-is", { modelId });
+    const existing = Array.isArray(prev.final_edit_results)
+      ? prev.final_edit_results.filter((u): u is string => typeof u === "string" && u.length > 0)
+      : [];
+    if (existing.length >= PARALLEL) await deliverResults(model, existing.slice(0, PARALLEL));
+    return;
+  }
+
+  const backdropUrl = backdropReferenceUrl(po.background);
+  const prompt = buildGeminiEditPrompt({
+    hasJacket: Boolean(jacketUrl),
+    hasBackdropRef: Boolean(backdropUrl),
+  });
+  const referenceUrls = [
+    badgeUrl,
+    patchUrl,
+    brassUrl,
+    ...(jacketUrl ? [jacketUrl] : []),
+    ...(backdropUrl ? [backdropUrl] : []),
+  ];
+
+  // Clear failing slots BEFORE resubmitting so the merge RPC's filled_count
+  // drops below 4 and completion only fires after every re-edit lands.
+  const currentResults = Array.isArray(prev.final_edit_results)
+    ? [...prev.final_edit_results]
+    : Array(PARALLEL).fill("");
+  for (const i of indices) currentResults[i] = "";
+
+  await supabase
+    .from("models")
+    .update({
+      prompt_options: {
+        ...prev,
+        final_edit_results: currentResults,
+        judge_round: 1,
+        judge_scores_round1: round1Scores,
+      } as unknown as Json,
+      status: "processing_final_edit",
+    })
+    .eq("id", modelId)
+    .eq("user_id", userId);
+
+  const requestIds = await Promise.all(
+    indices.map((index) =>
+      submitFal(
+        env.geminiEditModel,
+        {
+          prompt,
+          image_urls: [portraitUrls[index], ...referenceUrls],
+        },
+        pipelineWebhookUrl(userId, modelId, "final_edit", index)
+      )
+    )
+  );
+
+  await logEvent(supabase, {
+    userId,
+    modelId,
+    stage: "final_edit",
+    eventType: "submit_success",
+    message: `Judge re-edit queued for ${indices.length} image(s)`,
+    payload: { modelId, stage: "final_edit", requestIds, indices },
+  });
 }
 
 /**
