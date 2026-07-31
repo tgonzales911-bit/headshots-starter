@@ -32,15 +32,20 @@ export function buildFluxBasePrompt(ctx?: FluxBasePromptContext): string {
 export type GeminiEditPromptOptions = {
   /** True when a Class A jacket reference photo is attached as Image 4. */
   hasJacket?: boolean;
+  /** True when the canonical backdrop image is attached after the other references. */
+  hasBackdropRef?: boolean;
 };
 
 /**
  * fal-ai/gemini-3-pro-image-preview/edit
  * Image order: [0] portrait, [1] badge, [2] shoulder patch, [3] collar brass,
- * [4] Class A jacket (optional — only when hasJacket is true).
+ * [4] Class A jacket (optional — only when hasJacket is true),
+ * then the canonical flag backdrop (optional — only when hasBackdropRef is true).
  */
 export function buildGeminiEditPrompt(opts?: GeminiEditPromptOptions): string {
   const hasJacket = opts?.hasJacket === true;
+  const hasBackdropRef = opts?.hasBackdropRef === true;
+  const backdropIndex = hasJacket ? 5 : 4;
   return [
     "1. FACE AND HEAD PRESERVATION (highest priority):",
     "The subject's face, head, and scalp must be preserved exactly as they appear in Image 0 with zero alterations.",
@@ -60,7 +65,9 @@ export function buildGeminiEditPrompt(opts?: GeminiEditPromptOptions): string {
       ? "Image 4 is a photo of the customer's real Class A jacket. Match the jacket in the output to THIS jacket — same cut, lapel style, button count, button finish, and breast configuration (e.g. double-breasted with gold buttons if that is what is shown). Keep the jacket fit natural on the subject's body from Image 0."
       : "Keep the Class A jacket exactly as it appears in Image 0 — navy double-breasted dress jacket with gold buttons, white shirt, and tie. Do not restyle it.",
     "6. BACKGROUND:",
-    "Replace the existing background with an American flag.",
+    hasBackdropRef
+      ? `Image ${backdropIndex} is the official studio flag backdrop. Replace the existing background with THIS exact backdrop — same flag, same drape, same colors, same framing. Do not invent a different flag or change how it hangs.`
+      : "Replace the existing background with an American flag.",
     "The flag should be slightly out of focus, simulating 85mm f/2.8 portrait lens bokeh — it should read clearly as an American flag but not be tack-sharp.",
     "The flag should be evenly lit, NOT blown out, NOT overexposed.",
     "Exposure should match the subject — the flag brightness should feel like a professional portrait studio backdrop, not a window or light source.",

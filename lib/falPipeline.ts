@@ -1,4 +1,4 @@
-import { PARALLEL_IMAGE_COUNT } from "@/lib/constants";
+import { PARALLEL_IMAGE_COUNT, backdropReferenceUrl } from "@/lib/constants";
 import { parseModelPromptOptions } from "@/lib/modelPromptOptions";
 import { buildFluxBasePrompt, buildGeminiEditPrompt } from "@/lib/promptMapping";
 import { Database, Json } from "@/types/supabase";
@@ -370,8 +370,18 @@ export async function submitFinalEditStage(model: PipelineModel): Promise<void> 
     return;
   }
 
-  const prompt = buildGeminiEditPrompt({ hasJacket: Boolean(jacketUrl) });
-  const referenceUrls = [badgeUrl, patchUrl, brassUrl, ...(jacketUrl ? [jacketUrl] : [])];
+  const backdropUrl = backdropReferenceUrl(po.background);
+  const prompt = buildGeminiEditPrompt({
+    hasJacket: Boolean(jacketUrl),
+    hasBackdropRef: Boolean(backdropUrl),
+  });
+  const referenceUrls = [
+    badgeUrl,
+    patchUrl,
+    brassUrl,
+    ...(jacketUrl ? [jacketUrl] : []),
+    ...(backdropUrl ? [backdropUrl] : []),
+  ];
   const slice = portraitUrls.slice(0, PARALLEL);
 
   const requestIds = await Promise.all(
