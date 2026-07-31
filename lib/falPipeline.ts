@@ -50,6 +50,10 @@ const env = {
   geminiEditModel: process.env.FAL_MODEL_GEMINI_EDIT ?? "fal-ai/gemini-3-pro-image-preview/edit",
 };
 
+// A/B/C test knobs: FLUX.2 [dev] LoRA wants guidance ~2-4 vs FLUX.1's 3.5.
+const baseGenGuidanceScale = Number(process.env.FAL_BASE_GUIDANCE_SCALE) || 3.5;
+const baseGenSteps = Number(process.env.FAL_BASE_INFERENCE_STEPS) || 28;
+
 function required(name: keyof typeof env): string {
   const value = env[name];
   if (!value) throw new Error(`Missing required environment variable: ${name}`);
@@ -306,8 +310,8 @@ export async function submitBaseGeneration(model: PipelineModel): Promise<void> 
       num_images: PARALLEL,
       image_size: { width: 832, height: 1248 },
       loras: [{ path: weightsUrl, scale: 1.0 }],
-      guidance_scale: 3.5,
-      num_inference_steps: 28,
+      guidance_scale: baseGenGuidanceScale,
+      num_inference_steps: baseGenSteps,
     },
     webhookUrl
   );
