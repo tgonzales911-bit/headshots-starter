@@ -4,6 +4,10 @@ import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { Resend } from "resend";
+import {
+  buildDeliveryEmailHtml,
+  DELIVERY_EMAIL_SUBJECT,
+} from "@/lib/deliveryEmail";
 
 export const dynamic = "force-dynamic";
 
@@ -23,19 +27,6 @@ function asPromptJson(raw: unknown): Record<string, unknown> {
     return raw as Record<string, unknown>;
   }
   return {};
-}
-
-function buildDeliveryEmailHtml(urls: string[]): string {
-  const blocks = urls
-    .map(
-      (url, i) =>
-        `<div style="margin-bottom:16px;">
-  <p><a href="${url}" target="_blank" rel="noopener noreferrer">Portrait ${i + 1}</a></p>
-  <p><img src="${url}" alt="Portrait ${i + 1}" style="max-width:100%;max-height:320px;border-radius:8px;" /></p>
-</div>`
-    )
-    .join("");
-  return `<p>Your BadgeShot portraits are ready.</p>${blocks}`;
 }
 
 export async function POST(request: Request) {
@@ -193,11 +184,20 @@ export async function POST(request: Request) {
     const resendKey = process.env.RESEND_API_KEY;
     if (resendKey && toEmail) {
       const resend = new Resend(resendKey);
+      const customerName =
+        typeof prev.name === "string" ? (prev.name as string) : null;
+      const originRaw = process.env.DEPLOYMENT_URL?.trim() || "badgeshot.vercel.app";
+      const origin = (originRaw.startsWith("http") ? originRaw : `https://${originRaw}`).replace(/\/$/, "");
       const { error: sendErr } = await resend.emails.send({
         from: "orders@badgeshot.com",
+        reply_to: "orders@badgeshot.com",
         to: toEmail,
-        subject: "Your BadgeShot portraits are ready",
-        html: buildDeliveryEmailHtml(imageUrls),
+        subject: DELIVERY_EMAIL_SUBJECT,
+        html: buildDeliveryEmailHtml({
+          finalUrls: imageUrls,
+          customerName,
+          downloadAllUrl: `${origin}/overview/models/${modelIdNum}`,
+        }),
       });
       if (sendErr) {
         console.error("[admin/ops/deliver] Resend", sendErr);

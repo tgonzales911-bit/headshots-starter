@@ -5,6 +5,7 @@ import {
   runJudge,
   type JudgeScore,
 } from "@/lib/judgeNode";
+import { buildDeliveryEmailHtml, DELIVERY_EMAIL_SUBJECT } from "@/lib/deliveryEmail";
 import { parseModelPromptOptions } from "@/lib/modelPromptOptions";
 import { buildFluxBasePrompt, buildGeminiEditPrompt } from "@/lib/promptMapping";
 import { Database, Json } from "@/types/supabase";
@@ -615,6 +616,14 @@ async function resubmitFinalEditForIndices(
   });
 }
 
+/** Site origin for customer-facing links; never throws. */
+function siteOrigin(): string {
+  const raw = process.env.DEPLOYMENT_URL?.trim() || "badgeshot.vercel.app";
+  const withProto =
+    raw.startsWith("http://") || raw.startsWith("https://") ? raw : `https://${raw}`;
+  return withProto.replace(/\/$/, "");
+}
+
 /**
  * STAGE 4 — Persist finals, update model, email customer.
  */
@@ -658,17 +667,17 @@ export async function deliverResults(model: PipelineModel, finalUrls: string[]):
   const email = userData.user?.email;
   if (env.resendApiKey && email) {
     const resend = new Resend(env.resendApiKey);
-    const linksHtml = finalUrls
-      .map(
-        (url, i) =>
-          `<li><a href="${url}" target="_blank" rel="noopener noreferrer">Headshot ${i + 1}</a></li>`
-      )
-      .join("");
+    const customerName = typeof prev.name === "string" ? prev.name : null;
     await resend.emails.send({
       from: "orders@badgeshot.com",
+      reply_to: "orders@badgeshot.com",
       to: email,
-      subject: "Your BadgeShot headshots are ready",
-      html: `<p>Your BadgeShot headshots are ready.</p><ul>${linksHtml}</ul>`,
+      subject: DELIVERY_EMAIL_SUBJECT,
+      html: buildDeliveryEmailHtml({
+        finalUrls,
+        customerName,
+        downloadAllUrl: `${siteOrigin()}/overview/models/${modelId}`,
+      }),
     });
     console.log("[falPipeline] deliverResults email sent", { modelId, to: email });
   } else {
