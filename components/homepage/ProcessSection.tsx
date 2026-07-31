@@ -10,7 +10,7 @@ const processSteps = [
   {
     number: 1,
     title: "Upload Your Photos",
-    description: "Upload 4+ high-quality selfies: front facing, 1 person in frame, no glasses or hats.",
+    description: "Upload 15–20 phone selfies with variety — different tops, rooms, angles, and lighting. One person in frame; no hats or sunglasses.",
     icon: <Camera className="h-5 w-5" />,
     images: ["/example1.png", "/example2.png", "/example3.png"]
   },

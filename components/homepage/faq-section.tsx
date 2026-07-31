@@ -56,7 +56,7 @@ export default function FAQSection() {
     {
       question: "What kind of photos should I upload?",
       answer:
-        "For best results, upload at least 4 high-quality selfies with good lighting. Photos should be front-facing with only one person in the frame. Avoid wearing glasses or hats, and try to capture different expressions and angles for more variety in your results.",
+        "For best results, upload 15–20 phone selfies with plenty of variety: at least 3 different tops, 2+ different rooms or backgrounds, a mix of arm's-length and farther shots, varied head angles (straight, slight left, slight right), varied expressions (neutral and smiling), and varied lighting (window light and indoor). Only one person in the frame. Avoid hats, sunglasses, heavy filters, and taking every photo from the same spot.",
     },
     {
       question: "Can I use these headshots professionally?",

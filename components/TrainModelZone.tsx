@@ -263,11 +263,11 @@ export default function TrainModelZone() {
           (file: File) => !files.some((f) => f.name === file.name)
         ) || [];
 
-      if (newFiles.length + files.length > 10) {
+      if (newFiles.length + files.length > 20) {
         toast({
           title: "Too many images",
           description:
-            "You can only upload up to 10 images in total. Please try again.",
+            "You can only upload up to 20 images in total. Please try again.",
           duration: 5000,
         });
         return;
@@ -936,10 +936,22 @@ export default function TrainModelZone() {
             className=" rounded-md justify-center align-middle cursor-pointer flex flex-col gap-4"
           >
             <FormLabel>Samples</FormLabel>
-            <FormDescription>
-              Upload 10-15 photos for best results. More photos = better
-              likeness. iPhone photos work great.
-            </FormDescription>
+            <div className="text-sm text-muted-foreground space-y-2">
+                <p>
+                  Upload 15–20 photos for best results. iPhone photos work
+                  great — variety matters more than quality.
+                </p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>At least 3 different tops and 2+ different rooms or backgrounds</li>
+                  <li>Mix of arm&apos;s-length and farther-away shots</li>
+                  <li>Varied head angles: straight on, slight left, slight right</li>
+                  <li>Varied expressions (neutral + smile) and lighting (window light + indoor)</li>
+                </ul>
+                <p>
+                  Avoid: hats, sunglasses, heavy filters, and taking every
+                  photo from the same spot.
+                </p>
+            </div>
             <div className="outline-dashed outline-2 outline-gray-100 hover:outline-blue-500 w-full h-full rounded-md p-4 flex justify-center align-middle">
               <input {...getInputProps()} />
               {isDragActive ? (
