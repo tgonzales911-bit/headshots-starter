@@ -13,7 +13,7 @@ export function buildFluxBasePrompt(ctx?: FluxBasePromptContext): string {
   const rank = ctx?.rank?.trim();
 
   const fireClassA =
-    "Subject in Class A navy fire department dress uniform — double-breasted jacket with gold buttons, white shirt, tie. No insignia, no patches, no badges, no collar brass. Neutral gray seamless studio background. Professional headshot composition, 85mm lens equivalent at 6 feet subject distance, f/2.8, single key light from upper left, no fill light, defined jaw and cheekbone shadow. ISO 800 film grain, visible pores, natural skin texture. Not plastic, not waxy, no digital smoothing.";
+    "Subject in Class A navy fire department dress uniform — double-breasted jacket with gold buttons, white shirt, tie. No insignia, no patches, no badges, no collar brass. Natural build and body proportions consistent with the training photos — do not exaggerate body mass, broaden the frame, or slim the subject. Neutral gray seamless studio background. Professional headshot composition, 85mm lens equivalent at 6 feet subject distance, f/2.8, single key light from upper left, no fill light, defined jaw and cheekbone shadow. ISO 800 film grain, visible pores, natural skin texture. Not plastic, not waxy, no digital smoothing.";
 
   const prefix: string[] = [];
   if (rank) {
