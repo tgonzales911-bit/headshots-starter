@@ -114,16 +114,22 @@ function parseScores(text: string, expected: number): JudgeScore[] | null {
   return out;
 }
 
+export type JudgeResult = {
+  scores: JudgeScore[] | null;
+  /** Human-readable failure reason when scores is null. Never contains key material. */
+  error: string | null;
+};
+
 export async function runJudge(args: {
   outputUrls: string[];
   selfieUrls: string[];
   badgeUrl?: string;
   brassUrl?: string;
-}): Promise<JudgeScore[] | null> {
+}): Promise<JudgeResult> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     console.warn("[judgeNode] GEMINI_API_KEY not set — skipping judge");
-    return null;
+    return { scores: null, error: "GEMINI_API_KEY is not set in this deployment's environment" };
   }
   const model = process.env.GEMINI_JUDGE_MODEL?.trim() || "gemini-3-flash";
 
@@ -132,7 +138,7 @@ export async function runJudge(args: {
     const part = await fetchImagePart(args.outputUrls[i]);
     if (!part) {
       console.error("[judgeNode] could not fetch output image", { index: i });
-      return null;
+      return { scores: null, error: `Could not fetch output image ${i} for judging` };
     }
     outputParts.push({ text: `OUTPUT ${i}:` }, part);
   }
@@ -179,7 +185,10 @@ export async function runJudge(args: {
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
     console.error("[judgeNode] Gemini API error", { status: res.status, errText: errText.slice(0, 500) });
-    return null;
+    return {
+      scores: null,
+      error: `Gemini API HTTP ${res.status}: ${sanitizeError(errText).slice(0, 300)}`,
+    };
   }
 
   const body = (await res.json()) as {
@@ -190,12 +199,83 @@ export async function runJudge(args: {
     .join("");
   if (!text.trim()) {
     console.error("[judgeNode] empty judge response");
-    return null;
+    return { scores: null, error: "Gemini returned an empty response" };
   }
 
   const scores = parseScores(text, args.outputUrls.length);
   if (!scores) {
     console.error("[judgeNode] could not parse judge response", { text: text.slice(0, 500) });
+    return { scores: null, error: "Could not parse judge response as score JSON" };
   }
-  return scores;
+  return { scores, error: null };
+}
+
+/** Strip anything that looks like an API key from error text before logging to the timeline. */
+function sanitizeError(text: string): string {
+  return text.replace(/key=[\w-]+/gi, "key=[redacted]").replace(/AIza[\w-]{10,}/g, "[redacted]");
+}
+
+/**
+ * Minimal connectivity check for the admin diagnostic: verifies the key is
+ * present in this deployment and that a tiny text-only Gemini call succeeds.
+ */
+export async function testJudgeConnection(): Promise<{
+  ok: boolean;
+  keyPresent: boolean;
+  model: string;
+  detail: string;
+}> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  const model = process.env.GEMINI_JUDGE_MODEL?.trim() || "gemini-3-flash";
+  if (!apiKey) {
+    return {
+      ok: false,
+      keyPresent: false,
+      model,
+      detail:
+        "GEMINI_API_KEY is not set in this deployment's environment. Add it in Vercel (Production environment) and redeploy.",
+    };
+  }
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [{ text: "Reply with exactly: OK" }] }],
+          generationConfig: { temperature: 0, maxOutputTokens: 10 },
+        }),
+      }
+    );
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      return {
+        ok: false,
+        keyPresent: true,
+        model,
+        detail: `Gemini API HTTP ${res.status}: ${sanitizeError(errText).slice(0, 400)}`,
+      };
+    }
+    const body = (await res.json()) as {
+      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    };
+    const text = (body.candidates?.[0]?.content?.parts ?? [])
+      .map((p) => p.text ?? "")
+      .join("")
+      .trim();
+    return {
+      ok: true,
+      keyPresent: true,
+      model,
+      detail: `Key works. Model ${model} responded: "${text.slice(0, 40)}"`,
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      keyPresent: true,
+      model,
+      detail: `Request failed: ${sanitizeError(e instanceof Error ? e.message : String(e)).slice(0, 400)}`,
+    };
+  }
 }

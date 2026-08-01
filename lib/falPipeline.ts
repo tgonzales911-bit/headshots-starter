@@ -456,14 +456,18 @@ export async function judgeAndDeliver(model: PipelineModel, finalUrls: string[])
     .slice(0, 3);
 
   let scores: JudgeScore[] | null = null;
+  let judgeError: string | null = null;
   try {
-    scores = await runJudge({
+    const result = await runJudge({
       outputUrls: finalUrls,
       selfieUrls,
       badgeUrl: po.badge_url,
       brassUrl: po.brass_url,
     });
+    scores = result.scores;
+    judgeError = result.error;
   } catch (e) {
+    judgeError = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
     console.error("[falPipeline] judge threw", { modelId, e });
   }
 
@@ -473,8 +477,8 @@ export async function judgeAndDeliver(model: PipelineModel, finalUrls: string[])
       modelId,
       stage: "judge",
       eventType: "judge_skipped",
-      message: "Judge unavailable — delivering without QC scores",
-      payload: { round: round + 1 },
+      message: `Judge unavailable — delivering without QC scores. Reason: ${judgeError ?? "unknown"}`,
+      payload: { round: round + 1, error: judgeError },
     });
     await deliverResults(model, finalUrls);
     return;

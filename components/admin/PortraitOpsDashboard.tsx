@@ -408,6 +408,39 @@ export default function PortraitOpsDashboard({
   const [qcState, setQcState] = useState<Record<string, boolean>>({});
   const [refreshing, setRefreshing] = useState(false);
   const [modeSaving, setModeSaving] = useState(false);
+  const [judgeTesting, setJudgeTesting] = useState(false);
+  const [judgeTestResult, setJudgeTestResult] = useState<{
+    ok: boolean;
+    model: string;
+    detail: string;
+  } | null>(null);
+
+  const testJudge = useCallback(async () => {
+    setJudgeTesting(true);
+    setJudgeTestResult(null);
+    try {
+      const res = await fetch("/api/admin/ops/judge-test");
+      const body = (await res.json()) as {
+        ok?: boolean;
+        model?: string;
+        detail?: string;
+        error?: string;
+      };
+      setJudgeTestResult({
+        ok: body.ok === true,
+        model: body.model ?? "?",
+        detail: body.detail ?? body.error ?? "No detail returned",
+      });
+    } catch (e) {
+      setJudgeTestResult({
+        ok: false,
+        model: "?",
+        detail: e instanceof Error ? e.message : "Request failed",
+      });
+    } finally {
+      setJudgeTesting(false);
+    }
+  }, []);
   const [deliverUrls, setDeliverUrls] = useState<[string, string, string, string]>([
     "",
     "",
@@ -680,15 +713,36 @@ export default function PortraitOpsDashboard({
             </button>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => void refreshOrders()}
-          disabled={refreshing}
-          className="rounded-lg border border-white/15 bg-white/5 px-4 py-2 text-xs font-medium text-zinc-200 hover:bg-white/10 disabled:opacity-50"
-        >
-          {refreshing ? "Refreshing…" : "Refresh orders"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void testJudge()}
+            disabled={judgeTesting}
+            className="rounded-lg border border-white/15 bg-white/5 px-4 py-2 text-xs font-medium text-zinc-200 hover:bg-white/10 disabled:opacity-50"
+          >
+            {judgeTesting ? "Testing judge…" : "Test judge connection"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void refreshOrders()}
+            disabled={refreshing}
+            className="rounded-lg border border-white/15 bg-white/5 px-4 py-2 text-xs font-medium text-zinc-200 hover:bg-white/10 disabled:opacity-50"
+          >
+            {refreshing ? "Refreshing…" : "Refresh orders"}
+          </button>
+        </div>
       </header>
+      {judgeTestResult && (
+        <div
+          className={`shrink-0 border-b px-6 py-2 text-xs ${
+            judgeTestResult.ok
+              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+              : "border-red-500/30 bg-red-500/10 text-red-300"
+          }`}
+        >
+          Judge test ({judgeTestResult.model}): {judgeTestResult.ok ? "PASS" : "FAIL"} — {judgeTestResult.detail}
+        </div>
+      )}
 
       <div className="flex min-h-0 flex-1">
         <aside className="flex w-[280px] shrink-0 flex-col border-r border-white/10 bg-[#0a0c10]">
