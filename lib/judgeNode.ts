@@ -19,14 +19,14 @@ export type JudgeScore = {
   face_match: JudgeMetric;
   badge_match: JudgeMetric;
   brass_match: JudgeMetric;
-  background_consistency: JudgeMetric;
+  composite_quality: JudgeMetric;
 };
 
 const METRIC_KEYS = [
   "face_match",
   "badge_match",
   "brass_match",
-  "background_consistency",
+  "composite_quality",
 ] as const;
 
 export function failingIndices(scores: JudgeScore[]): number[] {
@@ -63,10 +63,10 @@ function judgeInstructions(outputCount: number, selfieCount: number): string {
     `- face_match: does the person in the output look like the SAME person as in the training selfies? 10 = unmistakably the same person; below 7 = reads as a different person.`,
     `- badge_match: does the chest badge in the output reproduce the badge reference (shape, text, finish)? Below 7 = wrong or invented badge.`,
     `- brass_match: does the collar brass in the output reproduce the brass reference (device, finish, both collar points, proportional size)? Below 7 = wrong, missing, or oversized brass.`,
-    `- background_consistency: is the background treatment (flag, drape, scale, lighting) consistent with the OTHER output images in this set? 10 = indistinguishable treatment; below 7 = clearly different backdrop.`,
+    `- composite_quality: the background is a composited studio backdrop, identical across the set by construction. Judge the COMPOSITE itself: clean, crisp subject edges (hair, shoulders, cap), no halos or glow, no leftover gray fringe from the original background, natural-looking transition and shadowing between subject and backdrop. Below 7 = visible cutout artifacts.`,
     `Be strict: 7 is the delivery threshold.`,
     `Respond with ONLY a JSON array of exactly ${outputCount} objects, one per output in order, shaped:`,
-    `[{"index":0,"face_match":{"score":9,"reason":"..."},"badge_match":{"score":8,"reason":"..."},"brass_match":{"score":7,"reason":"..."},"background_consistency":{"score":9,"reason":"..."}}, ...]`,
+    `[{"index":0,"face_match":{"score":9,"reason":"..."},"badge_match":{"score":8,"reason":"..."},"brass_match":{"score":7,"reason":"..."},"composite_quality":{"score":9,"reason":"..."}}, ...]`,
   ].join("\n");
 }
 
@@ -105,11 +105,11 @@ function parseScores(text: string, expected: number): JudgeScore[] | null {
     const face_match = parseMetric(r.face_match);
     const badge_match = parseMetric(r.badge_match);
     const brass_match = parseMetric(r.brass_match);
-    const background_consistency = parseMetric(r.background_consistency);
-    if (!face_match || !badge_match || !brass_match || !background_consistency) {
+    const composite_quality = parseMetric(r.composite_quality);
+    if (!face_match || !badge_match || !brass_match || !composite_quality) {
       return null;
     }
-    out.push({ index: i, face_match, badge_match, brass_match, background_consistency });
+    out.push({ index: i, face_match, badge_match, brass_match, composite_quality });
   }
   return out;
 }

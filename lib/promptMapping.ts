@@ -32,20 +32,18 @@ export function buildFluxBasePrompt(ctx?: FluxBasePromptContext): string {
 export type GeminiEditPromptOptions = {
   /** True when a Class A jacket reference photo is attached as Image 4. */
   hasJacket?: boolean;
-  /** True when the canonical backdrop image is attached after the other references. */
-  hasBackdropRef?: boolean;
 };
 
 /**
  * fal-ai/gemini-3-pro-image-preview/edit
  * Image order: [0] portrait, [1] badge, [2] shoulder patch, [3] collar brass,
- * [4] Class A jacket (optional — only when hasJacket is true),
- * then the canonical flag backdrop (optional — only when hasBackdropRef is true).
+ * [4] Class A jacket (optional — only when hasJacket is true).
+ * The flag backdrop is NOT given to the edit model — it is composited
+ * deterministically afterwards (lib/compositeBackdrop.ts), so the edit renders
+ * a plain gray background that segments cleanly.
  */
 export function buildGeminiEditPrompt(opts?: GeminiEditPromptOptions): string {
   const hasJacket = opts?.hasJacket === true;
-  const hasBackdropRef = opts?.hasBackdropRef === true;
-  const backdropIndex = hasJacket ? 5 : 4;
   return [
     "1. FACE AND HEAD PRESERVATION (highest priority):",
     "The subject's face, head, and scalp must be preserved exactly as they appear in Image 0 with zero alterations.",
@@ -65,13 +63,9 @@ export function buildGeminiEditPrompt(opts?: GeminiEditPromptOptions): string {
       ? "Image 4 is a photo of the customer's real Class A jacket. Match the jacket in the output to THIS jacket — same cut, lapel style, button count, button finish, and breast configuration (e.g. double-breasted with gold buttons if that is what is shown). Keep the jacket fit natural on the subject's body from Image 0."
       : "Keep the Class A jacket exactly as it appears in Image 0 — navy double-breasted dress jacket with gold buttons, white shirt, and tie. Do not restyle it.",
     "6. BACKGROUND:",
-    hasBackdropRef
-      ? `Image ${backdropIndex} is the official studio flag backdrop. Replace the existing background with THIS exact backdrop — same flag, same drape, same colors, same framing. Do not invent a different flag or change how it hangs.`
-      : "Replace the existing background with an American flag.",
-    "The flag should be slightly out of focus, simulating 85mm f/2.8 portrait lens bokeh — it should read clearly as an American flag but not be tack-sharp.",
-    "The flag should be evenly lit, NOT blown out, NOT overexposed.",
-    "Exposure should match the subject — the flag brightness should feel like a professional portrait studio backdrop, not a window or light source.",
-    "Flag colors: deep red, bright white stripes, navy blue canton with white stars.",
+    "Keep or replace the background with a SOLID, UNIFORM, medium-gray studio backdrop — perfectly even tone, no gradient, no texture, no vignette, no props, no flag, no scenery of any kind.",
+    "The background must be a single flat gray so the subject can be cleanly separated from it in a later compositing step. Do not add any background elements.",
+    "Keep a crisp, clean edge between the subject and the gray background — no glow, no halo, no soft blending of hair or shoulders into the backdrop beyond natural sharpness.",
     "7. OVERALL:",
     "Final image must look like an official department Class A portrait photo.",
     "Maintain consistent professional studio lighting on the subject throughout.",

@@ -1,4 +1,6 @@
-import { PARALLEL_IMAGE_COUNT } from "@/lib/constants";
+import { backdropReferenceUrl, PARALLEL_IMAGE_COUNT } from "@/lib/constants";
+import { compositeOntoBackdrop } from "@/lib/compositeBackdrop";
+import { parseModelPromptOptions } from "@/lib/modelPromptOptions";
 import {
   handleFalPipeline,
   judgeAndDeliver,
@@ -356,7 +358,7 @@ export async function POST(request: Request) {
 
     const { data: modelForMerge } = await supabase
       .from("models")
-      .select("user_id, status")
+      .select("user_id, status, prompt_options")
       .eq("id", modelId)
       .single();
     if (!modelForMerge?.user_id) {
@@ -376,12 +378,50 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true }, { status: 200 });
     }
 
+    // Deterministic backdrop composite: gray-background edit result → subject
+    // cutout → canonical flag backdrop. Fail-open to the raw edit result.
+    let resultUrl = imageUrl;
+    const poForComposite = parseModelPromptOptions(modelForMerge.prompt_options);
+    const backdropUrl = backdropReferenceUrl(poForComposite.background);
+    if (backdropUrl) {
+      const composite = await compositeOntoBackdrop({
+        supabase,
+        userId: modelForMerge.user_id,
+        modelId,
+        index,
+        editedImageUrl: imageUrl,
+        backdropUrl,
+      });
+      if (composite.url) {
+        resultUrl = composite.url;
+        await insertPipelineEvent(supabase, {
+          userId,
+          modelId,
+          stage: "composite",
+          eventType: "completed",
+          message: `Composited image ${index + 1}/4 onto canonical backdrop`,
+          requestId: body.request_id ?? null,
+          payload: { index, compositeUrl: composite.url },
+        });
+      } else {
+        await insertPipelineEvent(supabase, {
+          userId,
+          modelId,
+          stage: "composite",
+          eventType: "composite_skipped",
+          message: `Composite skipped for image ${index + 1}/4 — delivering raw edit. Reason: ${composite.error}`,
+          requestId: body.request_id ?? null,
+          payload: { index, error: composite.error },
+        });
+      }
+    }
+
     const { data: mergeData, error: mergeErr } = await supabase.rpc("merge_pipeline_indexed_result", {
       p_model_id: modelId,
       p_results_key: "final_edit_results",
       p_slot: index,
       p_expected: 4,
-      p_url: imageUrl,
+      p_url: resultUrl,
       p_user_id: modelForMerge.user_id,
     });
 

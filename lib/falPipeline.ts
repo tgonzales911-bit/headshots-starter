@@ -1,4 +1,4 @@
-import { PARALLEL_IMAGE_COUNT, backdropReferenceUrl } from "@/lib/constants";
+import { PARALLEL_IMAGE_COUNT } from "@/lib/constants";
 import {
   failingIndices,
   JUDGE_THRESHOLD,
@@ -381,17 +381,12 @@ export async function submitFinalEditStage(model: PipelineModel): Promise<void> 
     return;
   }
 
-  const backdropUrl = backdropReferenceUrl(po.background);
-  const prompt = buildGeminiEditPrompt({
-    hasJacket: Boolean(jacketUrl),
-    hasBackdropRef: Boolean(backdropUrl),
-  });
+  const prompt = buildGeminiEditPrompt({ hasJacket: Boolean(jacketUrl) });
   const referenceUrls = [
     badgeUrl,
     patchUrl,
     brassUrl,
     ...(jacketUrl ? [jacketUrl] : []),
-    ...(backdropUrl ? [backdropUrl] : []),
   ];
   const slice = portraitUrls.slice(0, PARALLEL);
 
@@ -567,17 +562,12 @@ async function resubmitFinalEditForIndices(
     return;
   }
 
-  const backdropUrl = backdropReferenceUrl(po.background);
-  const prompt = buildGeminiEditPrompt({
-    hasJacket: Boolean(jacketUrl),
-    hasBackdropRef: Boolean(backdropUrl),
-  });
+  const prompt = buildGeminiEditPrompt({ hasJacket: Boolean(jacketUrl) });
   const referenceUrls = [
     badgeUrl,
     patchUrl,
     brassUrl,
     ...(jacketUrl ? [jacketUrl] : []),
-    ...(backdropUrl ? [backdropUrl] : []),
   ];
 
   // Clear failing slots BEFORE resubmitting so the merge RPC's filled_count
