@@ -18,21 +18,29 @@ No env changes. Run one order.
 
 ## Variant B — FLUX.2 [dev] LoRA base generation
 
-1. Retrain the same selfie set on fal's FLUX.2 trainer (or TrainModelZone's
-   FLUX.2 option when available). FLUX.2 tuning differs from FLUX.1:
-   - LoRA rank 32 (up to 64 for complex identities)
-   - guidance_scale ≈ 1 during training
-   - Differential Output Preservation on, to fight overfit
-2. Set Vercel env for the test window:
-   - `FAL_MODEL_BASE_GENERATION` = the FLUX.2 LoRA inference endpoint
-     (e.g. `fal-ai/flux-2/lora`)
-   - `FAL_BASE_GUIDANCE_SCALE` = `3` (FLUX.2 inference wants 2–4)
-   - `FAL_BASE_INFERENCE_STEPS` = `28` (adjust per endpoint docs)
-3. Keep the reference-image Gemini edit pass unchanged. Run one order.
+Verified against fal's live OpenAPI schemas (2026-08-02). The pipeline is
+fully env-switchable — the trainer AND the inference endpoint must both flip,
+because a FLUX.1 LoRA will not load on the FLUX.2 base model.
+
+1. Set Vercel **Production** env for the test window (all four):
+   - `FAL_MODEL_PORTRAIT_TRAINER` = `fal-ai/flux-2-trainer`
+   - `FAL_MODEL_BASE_GENERATION` = `fal-ai/flux-2/lora`
+   - `FAL_BASE_GUIDANCE_SCALE` = `3` (FLUX.2 inference wants 2–4; endpoint default 2.5)
+   - `FAL_BASE_INFERENCE_STEPS` = `28` (endpoint max 50)
+   Optional trainer knobs: `FAL_TRAINER_STEPS` (default 1000),
+   `FAL_TRAINER_LEARNING_RATE` (FLUX.2 default 0.00005).
+2. **Redeploy after saving the vars** — env changes only apply to new deploys.
+3. Run one full order (train → generate → edit → composite → judge).
 4. Revert the env vars after the run (or leave if B wins).
 
-Note: `image_size` is passed as an explicit `{width: 832, height: 1248}`
-object, which FLUX.2 endpoints also accept — no code change needed.
+Schema notes (already handled in code, `kickoffPortraitTraining`):
+- FLUX.2 trainer takes `image_data_url` (singular) and has NO
+  `trigger_phrase` param — the trigger phrase is passed as
+  `default_caption` instead. Trainer output is `diffusers_lora_file`,
+  same field the webhook already reads.
+- `fal-ai/flux-2/lora` accepts our exact payload: `image_size`
+  `{width: 832, height: 1248}` (allowed 512–2048), `num_images: 4` (max 4),
+  `loras: [{path, scale}]`, `guidance_scale`, `num_inference_steps`.
 
 ## Variant C — only if B still hallucinates insignia
 

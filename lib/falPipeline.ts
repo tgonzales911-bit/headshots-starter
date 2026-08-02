@@ -53,6 +53,8 @@ const env = {
 // A/B/C test knobs: FLUX.2 [dev] LoRA wants guidance ~2-4 vs FLUX.1's 3.5.
 const baseGenGuidanceScale = Number(process.env.FAL_BASE_GUIDANCE_SCALE) || 3.5;
 const baseGenSteps = Number(process.env.FAL_BASE_INFERENCE_STEPS) || 28;
+const trainerSteps = Number(process.env.FAL_TRAINER_STEPS) || null;
+const trainerLearningRate = Number(process.env.FAL_TRAINER_LEARNING_RATE) || null;
 
 function required(name: keyof typeof env): string {
   const value = env[name];
@@ -709,14 +711,27 @@ export async function kickoffPortraitTraining(args: {
     payload: { images_data_url: args.imagesDataUrl },
   });
 
+  // FLUX.2 trainer (fal-ai/flux-2-trainer) has a different input schema than
+  // the FLUX.1 portrait trainer: image_data_url (singular), no trigger_phrase
+  // param (the trigger goes in default_caption), and a lower default LR.
+  const isFlux2Trainer = env.trainerModel.includes("flux-2");
+  const trainerInput: Record<string, unknown> = isFlux2Trainer
+    ? {
+        image_data_url: args.imagesDataUrl,
+        default_caption: args.triggerPhrase,
+        steps: trainerSteps ?? 1000,
+        learning_rate: trainerLearningRate ?? 0.00005,
+      }
+    : {
+        images_data_url: args.imagesDataUrl,
+        trigger_phrase: args.triggerPhrase,
+        steps: trainerSteps ?? 1000,
+        learning_rate: trainerLearningRate ?? 0.00009,
+      };
+
   const requestId = await submitFal(
     env.trainerModel,
-    {
-      images_data_url: args.imagesDataUrl,
-      trigger_phrase: args.triggerPhrase,
-      steps: 1000,
-      learning_rate: 0.00009,
-    },
+    trainerInput,
     pipelineWebhookUrl(args.userId, args.modelId, "trainer")
   );
 
