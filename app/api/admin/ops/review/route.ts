@@ -4,6 +4,7 @@ import {
   resubmitFinalEditForIndices,
   type PipelineModel,
 } from "@/lib/falPipeline";
+import { rebuildSlotsFromComposites } from "@/lib/repairComposites";
 import { Database, Json } from "@/types/supabase";
 import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
@@ -13,8 +14,6 @@ import { NextResponse } from "next/server";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-const compositeBucket =
-  process.env.SUPABASE_TRAINING_DATASETS_BUCKET ?? "training-datasets";
 const PARALLEL = 4;
 
 function serviceClient(): SupabaseClient<Database> {
@@ -50,43 +49,6 @@ async function logReviewEvent(
     request_id: null,
   });
   if (error) console.error("[admin/ops/review] event insert failed", error);
-}
-
-/**
- * Rebuild final_edit_results from the stored composite files:
- * composites/{userId}/{modelId}/final_{index}_{timestamp}.png — latest per index.
- */
-async function repairFromComposites(
-  admin: SupabaseClient<Database>,
-  model: PipelineModel
-): Promise<{ slots: string[]; found: number }> {
-  const prefix = `composites/${model.user_id}/${model.id}`;
-  const { data: files, error } = await admin.storage
-    .from(compositeBucket)
-    .list(prefix, { limit: 200 });
-  if (error) throw new Error(`Storage list failed: ${error.message}`);
-
-  const latestByIndex = new Map<number, { ts: number; name: string }>();
-  for (const f of files ?? []) {
-    const m = f.name.match(/^final_(\d)_(\d+)\.png$/);
-    if (!m) continue;
-    const idx = Number(m[1]);
-    const ts = Number(m[2]);
-    if (idx < 0 || idx >= PARALLEL || !Number.isFinite(ts)) continue;
-    const cur = latestByIndex.get(idx);
-    if (!cur || ts > cur.ts) latestByIndex.set(idx, { ts, name: f.name });
-  }
-
-  const slots = Array.from({ length: PARALLEL }, (_, i) => {
-    const hit = latestByIndex.get(i);
-    if (!hit) return "";
-    const { data } = admin.storage
-      .from(compositeBucket)
-      .getPublicUrl(`${prefix}/${hit.name}`);
-    return data.publicUrl ?? "";
-  });
-
-  return { slots, found: slots.filter(Boolean).length };
 }
 
 export async function POST(request: Request) {
@@ -129,7 +91,10 @@ export async function POST(request: Request) {
     const slots = slotStrings(prev.final_edit_results);
 
     if (action === "repair") {
-      const { slots: rebuilt, found } = await repairFromComposites(admin, model);
+      const { slots: rebuilt, found } = await rebuildSlotsFromComposites(admin, {
+        userId: model.user_id,
+        modelId,
+      });
       // Keep existing non-empty slots where the rebuild found nothing.
       const merged = slots.map((s, i) => rebuilt[i] || s);
       const { error: updErr } = await admin

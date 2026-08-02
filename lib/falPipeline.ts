@@ -6,6 +6,7 @@ import {
   type JudgeScore,
 } from "@/lib/judgeNode";
 import { buildDeliveryEmailHtml, DELIVERY_EMAIL_SUBJECT } from "@/lib/deliveryEmail";
+import { rebuildSlotsFromComposites } from "@/lib/repairComposites";
 import { parseModelPromptOptions } from "@/lib/modelPromptOptions";
 import { buildFluxBasePrompt, buildGeminiEditPrompt } from "@/lib/promptMapping";
 import { Database, Json } from "@/types/supabase";
@@ -641,11 +642,10 @@ export async function sweepStuckJudges(minQuietSeconds = 180): Promise<number[]>
     if (!model.user_id) continue;
     const prev = asPromptJson(model.prompt_options);
     const slots = Array.isArray(prev.final_edit_results) ? prev.final_edit_results : [];
-    const urls = Array.from({ length: PARALLEL }, (_, i) => {
+    let urls = Array.from({ length: PARALLEL }, (_, i) => {
       const x = slots[i];
       return typeof x === "string" && x.length > 0 ? x : "";
     });
-    if (urls.some((u) => !u)) continue;
 
     const { data: lastEv } = await supabase
       .from("pipeline_events")
@@ -660,6 +660,38 @@ export async function sweepStuckJudges(minQuietSeconds = 180): Promise<number[]>
       if (ageMs < minQuietSeconds * 1000) continue;
     }
 
+    // Incomplete slots with a quiet pipeline: the composites may have
+    // uploaded fine while the merge RPC failed (e.g. the overload-ambiguity
+    // outage). Rebuild from storage before judging.
+    if (urls.some((u) => !u)) {
+      try {
+        const { slots: rebuilt, found } = await rebuildSlotsFromComposites(supabase, {
+          userId: model.user_id,
+          modelId: model.id,
+        });
+        if (found < PARALLEL) continue;
+        urls = rebuilt;
+        await supabase
+          .from("models")
+          .update({
+            prompt_options: { ...prev, final_edit_results: rebuilt } as Json,
+          })
+          .eq("id", model.id)
+          .eq("user_id", model.user_id);
+        await logEvent(supabase, {
+          userId: model.user_id,
+          modelId: model.id,
+          stage: "review",
+          eventType: "repaired",
+          message: "Recovery sweep: rebuilt final URL set from stored composites",
+          payload: { found },
+        });
+      } catch (e) {
+        console.error("[falPipeline] sweep repair failed", { modelId: model.id, e });
+        continue;
+      }
+    }
+
     console.log("[falPipeline] sweepStuckJudges kicking judge", { modelId: model.id });
     await logEvent(supabase, {
       userId: model.user_id,
@@ -669,7 +701,8 @@ export async function sweepStuckJudges(minQuietSeconds = 180): Promise<number[]>
       message: "Recovery sweep: 4/4 results present with no judge run — running judge now",
       payload: { urls_present: 4 },
     });
-    await judgeAndDeliver(model, urls);
+    const fresh = await loadModel(supabase, model.id, model.user_id);
+    await judgeAndDeliver(fresh ?? model, urls);
     kicked.push(model.id);
   }
   return kicked;
