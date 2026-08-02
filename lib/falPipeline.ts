@@ -56,6 +56,9 @@ const baseGenGuidanceScale = Number(process.env.FAL_BASE_GUIDANCE_SCALE) || 3.5;
 const baseGenSteps = Number(process.env.FAL_BASE_INFERENCE_STEPS) || 28;
 const trainerSteps = Number(process.env.FAL_TRAINER_STEPS) || null;
 const trainerLearningRate = Number(process.env.FAL_TRAINER_LEARNING_RATE) || null;
+// Inference LoRA strength; raise toward 1.1-1.25 to pull outputs closer to
+// the trained identity at some cost to prompt adherence.
+const baseLoraScale = Number(process.env.FAL_BASE_LORA_SCALE) || 1.0;
 
 function required(name: keyof typeof env): string {
   const value = env[name];
@@ -312,7 +315,7 @@ export async function submitBaseGeneration(model: PipelineModel): Promise<void> 
       prompt: fluxPrompt,
       num_images: PARALLEL,
       image_size: { width: 832, height: 1248 },
-      loras: [{ path: weightsUrl, scale: 1.0 }],
+      loras: [{ path: weightsUrl, scale: baseLoraScale }],
       guidance_scale: baseGenGuidanceScale,
       num_inference_steps: baseGenSteps,
     },
@@ -451,7 +454,7 @@ export async function judgeAndDeliver(model: PipelineModel, finalUrls: string[])
 
   const selfieUrls = (Array.isArray(prev.selfie_urls) ? prev.selfie_urls : [])
     .filter((s): s is string => typeof s === "string" && s.length > 0)
-    .slice(0, 3);
+    .slice(0, 4);
 
   let scores: JudgeScore[] | null = null;
   let judgeError: string | null = null;
