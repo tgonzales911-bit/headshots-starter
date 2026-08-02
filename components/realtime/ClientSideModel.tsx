@@ -111,6 +111,21 @@ export default function ClientSideModel({
     return fromLive;
   }, [model, serverHeadshots, serverImages, serverDownloadUrls]);
 
+  // needs_review orders have finished images in prompt_options.final_edit_results
+  // but no headshots rows yet (delivery is held for a quality check).
+  const pendingReviewUrls = useMemo(() => {
+    if (model.status !== "needs_review") return [];
+    const po =
+      model.prompt_options &&
+      typeof model.prompt_options === "object" &&
+      !Array.isArray(model.prompt_options)
+        ? (model.prompt_options as Record<string, unknown>)
+        : {};
+    const slots = po.final_edit_results;
+    if (!Array.isArray(slots)) return [];
+    return slots.filter((u): u is string => typeof u === "string" && u.length > 0);
+  }, [model]);
+
   return (
     <div id="train-model-container" className="w-full h-full">
       <div className="flex flex-col w-full mt-4 gap-8">
@@ -130,6 +145,31 @@ export default function ClientSideModel({
             </div>
           )}
           <div className="flex flex-col w-full lg:w-1/2 rounded-md">
+            {model.status === "needs_review" && pendingReviewUrls.length > 0 && (
+              <div className="flex flex-1 flex-col gap-2">
+                <div className="flex items-center gap-2">
+                  <h1 className="text-xl">Results</h1>
+                  <span className="rounded-full bg-amber-500/15 px-2.5 py-0.5 text-xs font-medium text-amber-600">
+                    Pending review
+                  </span>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Your portraits are finished and going through a final quality
+                  check. You&apos;ll get the delivery email as soon as they&apos;re
+                  approved.
+                </p>
+                <div className="flex flex-row flex-wrap gap-4">
+                  {pendingReviewUrls.map((url, i) => (
+                    <img
+                      key={`${url}-${i}`}
+                      src={url}
+                      className="rounded-md w-60 object-cover"
+                      alt={`Portrait ${i + 1} (pending review)`}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
             {model.status === "finished" && (
               <div className="flex flex-1 flex-col gap-2">
                 <h1 className="text-xl">Results</h1>

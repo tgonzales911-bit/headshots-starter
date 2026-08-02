@@ -529,14 +529,15 @@ export async function judgeAndDeliver(model: PipelineModel, finalUrls: string[])
 }
 
 /**
- * Re-run the Gemini edit for specific output indices only (judge round 2 path).
- * Clears the failing result slots so the webhook completion logic waits for
+ * Re-run the Gemini edit for specific output indices only. Used by the judge
+ * round-2 path and the admin review panel's "Re-run edits" action.
+ * Clears the targeted result slots so the webhook completion logic waits for
  * every re-edit before judging again.
  */
-async function resubmitFinalEditForIndices(
+export async function resubmitFinalEditForIndices(
   model: PipelineModel,
   indices: number[],
-  round1Scores: JudgeScore[]
+  round1Scores?: JudgeScore[] | null
 ): Promise<void> {
   const userId = model.user_id!;
   const modelId = model.id;
@@ -584,7 +585,7 @@ async function resubmitFinalEditForIndices(
         ...prev,
         final_edit_results: currentResults,
         judge_round: 1,
-        judge_scores_round1: round1Scores,
+        ...(round1Scores ? { judge_scores_round1: round1Scores } : {}),
       } as unknown as Json,
       status: "processing_final_edit",
     })

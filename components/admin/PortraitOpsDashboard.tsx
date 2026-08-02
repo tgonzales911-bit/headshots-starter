@@ -25,6 +25,10 @@ export interface Order {
     jacket_url?: string;
     base_image_urls?: string[];
     final_results?: string[];
+    final_edit_results?: string[];
+    judge_round?: number;
+    judge_scores_round1?: JudgeScoreUI[];
+    judge_scores_final?: JudgeScoreUI[];
   };
   recentEvents: Array<{
     stage: string;
@@ -40,6 +44,28 @@ export interface Props {
 }
 
 type StepStatus = "pending" | "active" | "done" | "skipped";
+
+type JudgeMetricUI = { score?: number; reason?: string };
+type JudgeScoreUI = {
+  index?: number;
+  face_match?: JudgeMetricUI;
+  badge_match?: JudgeMetricUI;
+  brass_match?: JudgeMetricUI;
+  composite_quality?: JudgeMetricUI;
+  background_consistency?: JudgeMetricUI;
+};
+
+const JUDGE_METRIC_LABELS: Array<{ key: keyof JudgeScoreUI; label: string }> = [
+  { key: "face_match", label: "Face" },
+  { key: "badge_match", label: "Badge" },
+  { key: "brass_match", label: "Brass" },
+  { key: "composite_quality", label: "Composite" },
+];
+
+function parseJudgeScores(raw: unknown): JudgeScoreUI[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  return raw.filter((x): x is JudgeScoreUI => !!x && typeof x === "object");
+}
 
 type OpsMode = "manual" | "auto";
 
@@ -109,6 +135,16 @@ const AUTONOMOUS_PIPELINE = [
     id: "gemini",
     label: "Gemini Edit",
     match: (stage: string) => stage === "final_edit",
+  },
+  {
+    id: "composite",
+    label: "Backdrop Composite",
+    match: (stage: string) => stage === "composite",
+  },
+  {
+    id: "judge",
+    label: "Judge QC",
+    match: (stage: string) => stage === "judge" || stage === "review",
   },
   {
     id: "delivery",
@@ -376,6 +412,15 @@ function normalizeOrdersFromApi(payload: unknown): Order[] {
             )
           : undefined,
         final_results,
+        final_edit_results: Array.isArray(poRaw?.final_edit_results)
+          ? (poRaw?.final_edit_results as unknown[]).map((x) =>
+              typeof x === "string" ? x : ""
+            )
+          : undefined,
+        judge_round:
+          typeof poRaw?.judge_round === "number" ? poRaw.judge_round : undefined,
+        judge_scores_round1: parseJudgeScores(poRaw?.judge_scores_round1),
+        judge_scores_final: parseJudgeScores(poRaw?.judge_scores_final),
       },
       recentEvents,
     };
@@ -409,6 +454,9 @@ export default function PortraitOpsDashboard({
   const [refreshing, setRefreshing] = useState(false);
   const [modeSaving, setModeSaving] = useState(false);
   const [judgeTesting, setJudgeTesting] = useState(false);
+  const [reviewBusy, setReviewBusy] = useState<string | null>(null);
+  const [reviewMsg, setReviewMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [reviewSelection, setReviewSelection] = useState<Set<number>>(new Set());
   const [judgeTestResult, setJudgeTestResult] = useState<{
     ok: boolean;
     model: string;
@@ -650,6 +698,57 @@ export default function PortraitOpsDashboard({
     await persistModeApi("manual");
   };
 
+  const reviewAction = useCallback(
+    async (action: "approve" | "rerun" | "escalate" | "repair", indices?: number[]) => {
+      if (!selected) return;
+      setReviewBusy(action);
+      setReviewMsg(null);
+      try {
+        const res = await fetch("/api/admin/ops/review", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ modelId: selected.id, action, indices }),
+        });
+        const body = (await res.json()) as Record<string, unknown>;
+        if (!res.ok) {
+          setReviewMsg({
+            ok: false,
+            text: typeof body.error === "string" ? body.error : "Action failed",
+          });
+        } else {
+          const text =
+            action === "approve"
+              ? "Approved — delivery email sent."
+              : action === "rerun"
+                ? `Re-edit queued for image(s) ${(indices ?? []).map((i) => i + 1).join(", ")}. The judge will re-score when they finish.`
+                : action === "repair"
+                  ? `Rebuilt final set from composites (${String(body.filled ?? "?")}/4 slots).`
+                  : "Escalated to the manual workflow.";
+          setReviewMsg({ ok: true, text });
+          setReviewSelection(new Set());
+          await refreshOrders();
+        }
+      } catch (e) {
+        setReviewMsg({
+          ok: false,
+          text: e instanceof Error ? e.message : "Request failed",
+        });
+      } finally {
+        setReviewBusy(null);
+      }
+    },
+    [selected, refreshOrders]
+  );
+
+  const toggleReviewSelection = (idx: number) => {
+    setReviewSelection((prev) => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
+      return next;
+    });
+  };
+
   const progressFraction = (orderId: string) => {
     const m = loadStepMap(orderId);
     return `${completedCount(m)}/8`;
@@ -804,6 +903,175 @@ export default function PortraitOpsDashboard({
           {!selected ? (
             <div className="flex h-full min-h-[240px] flex-col items-center justify-center text-center text-zinc-500">
               <p className="text-sm">Select an order to view its workflow.</p>
+            </div>
+          ) : selected.status === "needs_review" ? (
+            <div className="mx-auto max-w-5xl space-y-5">
+              <div>
+                <h2 className="text-lg font-semibold text-amber-300">
+                  Needs review — judge flagged this order
+                </h2>
+                <p className="text-xs text-zinc-500">
+                  {selected.promptOptions.name ?? selected.userEmail} ·{" "}
+                  {selected.promptOptions.department ?? "—"} · judge round{" "}
+                  {selected.promptOptions.judge_round ?? 0}
+                </p>
+              </div>
+
+              {(() => {
+                const slots = Array.from({ length: 4 }, (_, i) =>
+                  selected.promptOptions.final_edit_results?.[i] ?? ""
+                );
+                const incomplete = slots.some((s) => !s);
+                const r1 = selected.promptOptions.judge_scores_round1 ?? [];
+                const r2 = selected.promptOptions.judge_scores_final ?? [];
+                const scoreFor = (list: JudgeScoreUI[], i: number) =>
+                  list.find((s) => s.index === i);
+                return (
+                  <>
+                    {incomplete && (
+                      <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-xs text-red-200">
+                        This order&apos;s final URL set is incomplete (
+                        {slots.filter(Boolean).length}/4). Partial results are
+                        shown below. Use <strong>Repair from composites</strong>{" "}
+                        to rebuild the set from stored composite files before
+                        approving.
+                      </div>
+                    )}
+                    {reviewMsg && (
+                      <div
+                        className={`rounded-lg border px-4 py-3 text-xs ${
+                          reviewMsg.ok
+                            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+                            : "border-red-500/30 bg-red-500/10 text-red-200"
+                        }`}
+                      >
+                        {reviewMsg.text}
+                      </div>
+                    )}
+                    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                      {slots.map((url, i) => {
+                        const s1 = scoreFor(r1, i);
+                        const s2 = scoreFor(r2, i);
+                        return (
+                          <div
+                            key={i}
+                            className="flex flex-col rounded-xl border border-white/10 bg-[#0c0f14] p-3"
+                          >
+                            <div className="mb-2 flex items-center justify-between">
+                              <span className="text-xs font-semibold text-zinc-300">
+                                Image {i + 1}
+                              </span>
+                              <label className="flex items-center gap-1.5 text-[11px] text-zinc-400">
+                                <input
+                                  type="checkbox"
+                                  checked={reviewSelection.has(i)}
+                                  onChange={() => toggleReviewSelection(i)}
+                                  className="accent-[#c9a84c]"
+                                />
+                                re-run
+                              </label>
+                            </div>
+                            {url ? (
+                              <a href={url} target="_blank" rel="noreferrer">
+                                <img
+                                  src={url}
+                                  alt={`Output ${i + 1}`}
+                                  className="aspect-[2/3] w-full rounded-lg object-cover ring-1 ring-white/10 hover:opacity-90"
+                                />
+                              </a>
+                            ) : (
+                              <div className="flex aspect-[2/3] w-full items-center justify-center rounded-lg bg-white/5 text-xs text-red-300 ring-1 ring-red-500/30">
+                                Missing result
+                              </div>
+                            )}
+                            <div className="mt-2 space-y-1.5">
+                              {JUDGE_METRIC_LABELS.map(({ key, label }) => {
+                                const m1 = s1?.[key] as JudgeMetricUI | undefined;
+                                const m2 = s2?.[key] as JudgeMetricUI | undefined;
+                                const cell = (
+                                  m: JudgeMetricUI | undefined,
+                                  tag: string
+                                ) =>
+                                  m?.score != null ? (
+                                    <span
+                                      title={m.reason ?? ""}
+                                      className={`rounded px-1 py-0.5 text-[10px] font-semibold ${
+                                        m.score >= 7
+                                          ? "bg-emerald-500/15 text-emerald-300"
+                                          : "bg-red-500/15 text-red-300"
+                                      }`}
+                                    >
+                                      {tag}:{m.score}
+                                    </span>
+                                  ) : null;
+                                if (!m1 && !m2) return null;
+                                return (
+                                  <div key={String(key)} className="flex items-center gap-1.5">
+                                    <span className="w-16 text-[10px] uppercase tracking-wide text-zinc-500">
+                                      {label}
+                                    </span>
+                                    {cell(m1, "R1")}
+                                    {cell(m2, "R2")}
+                                  </div>
+                                );
+                              })}
+                              {(s1?.face_match?.reason || s2?.face_match?.reason) && (
+                                <p className="pt-1 text-[10px] leading-snug text-zinc-500">
+                                  {(s2 ?? s1)?.face_match?.reason}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <p className="text-[11px] text-zinc-500">
+                      Hover any score chip for the judge&apos;s reason. R1 = first
+                      judge pass, R2 = after re-edit.
+                    </p>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <button
+                        type="button"
+                        disabled={reviewBusy !== null || incomplete}
+                        onClick={() => void reviewAction("approve")}
+                        className="rounded-lg bg-emerald-600/80 px-5 py-2.5 text-xs font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {reviewBusy === "approve" ? "Delivering…" : "Approve & Deliver"}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={reviewBusy !== null || reviewSelection.size === 0}
+                        onClick={() =>
+                          void reviewAction("rerun", Array.from(reviewSelection).sort())
+                        }
+                        className="rounded-lg border border-[#4a82c9]/50 bg-[#4a82c9]/15 px-5 py-2.5 text-xs font-semibold text-[#7eb4ff] hover:bg-[#4a82c9]/25 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {reviewBusy === "rerun"
+                          ? "Queueing…"
+                          : `Re-run edits (${reviewSelection.size} selected)`}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={reviewBusy !== null}
+                        onClick={() => void reviewAction("escalate")}
+                        className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-5 py-2.5 text-xs font-medium text-amber-200 hover:bg-amber-500/20 disabled:opacity-40"
+                      >
+                        {reviewBusy === "escalate" ? "Escalating…" : "Escalate to Manual"}
+                      </button>
+                      {incomplete && (
+                        <button
+                          type="button"
+                          disabled={reviewBusy !== null}
+                          onClick={() => void reviewAction("repair")}
+                          className="rounded-lg border border-red-500/40 bg-red-500/10 px-5 py-2.5 text-xs font-medium text-red-200 hover:bg-red-500/20 disabled:opacity-40"
+                        >
+                          {reviewBusy === "repair" ? "Repairing…" : "Repair from composites"}
+                        </button>
+                      )}
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           ) : mode === "auto" ? (
             <div className="mx-auto max-w-3xl space-y-6">

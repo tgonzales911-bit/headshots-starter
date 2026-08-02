@@ -192,9 +192,10 @@ export async function runJudge(args: {
   }
 
   const body = (await res.json()) as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }>;
   };
   const text = (body.candidates?.[0]?.content?.parts ?? [])
+    .filter((p) => p.thought !== true)
     .map((p) => p.text ?? "")
     .join("");
   if (!text.trim()) {
@@ -244,7 +245,9 @@ export async function testJudgeConnection(): Promise<{
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contents: [{ role: "user", parts: [{ text: "Reply with exactly: OK" }] }],
-          generationConfig: { temperature: 0, maxOutputTokens: 10 },
+          // Generous cap: Gemini 3.x spends output tokens on internal thinking
+          // first — a tiny cap yields an empty text response.
+          generationConfig: { temperature: 0, maxOutputTokens: 512 },
         }),
       }
     );
@@ -258,9 +261,10 @@ export async function testJudgeConnection(): Promise<{
       };
     }
     const body = (await res.json()) as {
-      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+      candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }>;
     };
     const text = (body.candidates?.[0]?.content?.parts ?? [])
+      .filter((p) => p.thought !== true)
       .map((p) => p.text ?? "")
       .join("")
       .trim();

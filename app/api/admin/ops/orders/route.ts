@@ -25,6 +25,11 @@ type PromptOptionsResponse = {
   notes: string | null;
   base_image_urls: string[] | null;
   final_results: Json | null;
+  jacket_url: string | null;
+  final_edit_results: Json | null;
+  judge_round: number | null;
+  judge_scores_round1: Json | null;
+  judge_scores_final: Json | null;
 };
 
 function serviceClient() {
@@ -103,6 +108,11 @@ function pickPromptOptions(raw: Json | null): PromptOptionsResponse {
     notes: optString(o, "notes"),
     base_image_urls: optStringArray(o, "base_image_urls"),
     final_results: optJson(o, "final_results"),
+    jacket_url: optString(o, "jacket_url"),
+    final_edit_results: optJson(o, "final_edit_results"),
+    judge_round: optNumber(o, "judge_round"),
+    judge_scores_round1: optJson(o, "judge_scores_round1"),
+    judge_scores_final: optJson(o, "judge_scores_final"),
   };
 }
 
@@ -132,7 +142,7 @@ function groupRecentEvents(
     const mid = ev.model_id;
     if (mid == null || !allowed.has(mid)) continue;
     const n = counts.get(mid) ?? 0;
-    if (n >= 10) continue;
+    if (n >= 30) continue;
     counts.set(mid, n + 1);
     const list = grouped.get(mid) ?? [];
     list.push(ev);

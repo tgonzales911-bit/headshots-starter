@@ -378,6 +378,24 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true }, { status: 200 });
     }
 
+    // Duplicate-webhook dedup: fal occasionally delivers the same result twice.
+    // If this slot already holds a result, a concurrent/duplicate webhook for
+    // the same index already processed — skip before paying for a composite.
+    const poRawForDedup =
+      modelForMerge.prompt_options &&
+      typeof modelForMerge.prompt_options === "object" &&
+      !Array.isArray(modelForMerge.prompt_options)
+        ? (modelForMerge.prompt_options as Record<string, unknown>)
+        : {};
+    const existingSlots = Array.isArray(poRawForDedup.final_edit_results)
+      ? poRawForDedup.final_edit_results
+      : [];
+    const existingSlot = existingSlots[index];
+    if (typeof existingSlot === "string" && existingSlot.length > 0) {
+      console.log("[pipeline-webhook] final_edit duplicate webhook ignored", { modelId, index });
+      return NextResponse.json({ ok: true }, { status: 200 });
+    }
+
     // Deterministic backdrop composite: gray-background edit result → subject
     // cutout → canonical flag backdrop. Fail-open to the raw edit result.
     let resultUrl = imageUrl;
@@ -446,21 +464,24 @@ export async function POST(request: Request) {
 
     console.log("[pipeline-webhook] final_edit merged", { modelId, filled, becameComplete });
 
-    if (filled >= PARALLEL || becameComplete) {
+    // Only the merge that TRANSITIONED the set to complete proceeds — duplicate
+    // or late webhooks (filled already == 4) must not re-trigger the judge.
+    if (becameComplete) {
       const { data: modelForDelivery } = await supabase.from("models").select("*").eq("id", modelId).single();
       if (!modelForDelivery) {
         console.error("[pipeline-webhook] model missing before deliverResults", { modelId });
       } else {
-        const po =
-          modelForDelivery.prompt_options &&
-          typeof modelForDelivery.prompt_options === "object" &&
-          !Array.isArray(modelForDelivery.prompt_options)
-            ? (modelForDelivery.prompt_options as Record<string, unknown>)
-            : {};
-        const fromSlots = po.final_edit_results;
-        let finalUrls = resultsJsonToStrings(fromSlots, PARALLEL).filter((u) => u.length > 0);
+        // Prefer the RPC's atomic snapshot (row.results) — re-reading
+        // prompt_options races with a concurrent judge re-edit clearing slots.
+        let finalUrls = resultsJsonToStrings(row.results, PARALLEL).filter((u) => u.length > 0);
         if (finalUrls.length < PARALLEL) {
-          finalUrls = resultsJsonToStrings(row.results, PARALLEL).filter((u) => u.length > 0);
+          const po =
+            modelForDelivery.prompt_options &&
+            typeof modelForDelivery.prompt_options === "object" &&
+            !Array.isArray(modelForDelivery.prompt_options)
+              ? (modelForDelivery.prompt_options as Record<string, unknown>)
+              : {};
+          finalUrls = resultsJsonToStrings(po.final_edit_results, PARALLEL).filter((u) => u.length > 0);
         }
 
         if (finalUrls.length >= PARALLEL) {
