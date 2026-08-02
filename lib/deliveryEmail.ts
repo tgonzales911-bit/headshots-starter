@@ -109,7 +109,7 @@ export function buildDeliveryEmailHtml(args: DeliveryEmailArgs): string {
                 what you think. We may feature it (with your permission).
               </p>
               <p style="margin:12px 0 0 0;font-size:12px;color:#9aa2b1;">
-                BadgeShot &middot; orders@badgeshot.com
+                BadgeShot &middot; badgeshot.com &middot; questions? just reply to this email
               </p>
             </td>
           </tr>

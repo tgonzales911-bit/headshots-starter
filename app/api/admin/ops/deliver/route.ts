@@ -188,9 +188,13 @@ export async function POST(request: Request) {
         typeof prev.name === "string" ? (prev.name as string) : null;
       const originRaw = process.env.DEPLOYMENT_URL?.trim() || "badgeshot.vercel.app";
       const origin = (originRaw.startsWith("http") ? originRaw : `https://${originRaw}`).replace(/\/$/, "");
+      const fromEmail =
+        process.env.RESEND_FROM_EMAIL ??
+        process.env.EMAIL_FROM ??
+        "orders@badgeshot.com";
       const { error: sendErr } = await resend.emails.send({
-        from: "orders@badgeshot.com",
-        reply_to: "orders@badgeshot.com",
+        from: fromEmail,
+        reply_to: "thehalligansupport@gmail.com",
         to: toEmail,
         subject: DELIVERY_EMAIL_SUBJECT,
         html: buildDeliveryEmailHtml({

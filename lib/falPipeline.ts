@@ -764,8 +764,11 @@ export async function deliverResults(model: PipelineModel, finalUrls: string[]):
     const resend = new Resend(env.resendApiKey);
     const customerName = typeof prev.name === "string" ? prev.name : null;
     await resend.emails.send({
-      from: "orders@badgeshot.com",
-      reply_to: "orders@badgeshot.com",
+      from: env.fromEmail,
+      // Support decision 2026-08-02: inbound MX on badgeshot.com stays
+      // unconfigured (protects the Resend send records); replies route to
+      // the support Gmail instead.
+      reply_to: "thehalligansupport@gmail.com",
       to: email,
       subject: DELIVERY_EMAIL_SUBJECT,
       html: buildDeliveryEmailHtml({
