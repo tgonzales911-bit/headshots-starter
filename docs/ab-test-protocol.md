@@ -58,8 +58,18 @@ If B ≥ A on identity AND insignia fidelity is clean → adopt B, skip C entire
 - Record judge scores from `/overview/models/[id]` (or `pipeline_events`) per
   variant in this file when done.
 
-| Variant | Model # | face_match (avg) | badge_match | brass_match | background | Verdict |
-|---------|---------|------------------|-------------|-------------|------------|---------|
-| A       |         |                  |             |             |            |         |
-| B       |         |                  |             |             |            |         |
-| C       |         |                  |             |             |            |         |
+| Variant | Model # | face_match | badge_match | brass_match | composite | Verdict |
+|---------|---------|------------|-------------|-------------|-----------|---------|
+| A (FLUX.1) | 32 | 9/9/2/3 — 2 identity misses | ≥7 | ≥7 | ≥7 | needs_review (identity) |
+| B (FLUX.2) R1 | 33 | 9/9/8/9 | 6/6/6/4 | 6/6/4/6 | 9/9/9/9 | auto re-edit all 4 |
+| B (FLUX.2) R2 | 33 | 9/9/9/9 | 8/8/8/8 | 7/8/7/8 | 9/9/9/9 | **delivered, zero human touch** |
+| C | — | — | — | — | — | not needed |
+
+**Decision (2026-08-02): adopt B.** FLUX.2 fixed the identity failures
+outright (B ≥ A on face_match with no sub-7 scores across both rounds), and
+insignia fidelity cleared threshold after the judge's single automatic
+re-edit — the loop is doing its job. Skip C. Note the pattern for tuning:
+FLUX.2 round-1 insignia scores ran low (badge 4–6), suggesting the first
+edit pass fights FLUX.2's cleaner base uniform; if this repeats across
+orders, consider strengthening the badge/brass reference language rather
+than adding masked inpainting.
