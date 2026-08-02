@@ -699,7 +699,10 @@ export default function PortraitOpsDashboard({
   };
 
   const reviewAction = useCallback(
-    async (action: "approve" | "rerun" | "escalate" | "repair", indices?: number[]) => {
+    async (
+      action: "approve" | "rerun" | "escalate" | "repair" | "judge",
+      indices?: number[]
+    ) => {
       if (!selected) return;
       setReviewBusy(action);
       setReviewMsg(null);
@@ -723,7 +726,9 @@ export default function PortraitOpsDashboard({
                 ? `Re-edit queued for image(s) ${(indices ?? []).map((i) => i + 1).join(", ")}. The judge will re-score when they finish.`
                 : action === "repair"
                   ? `Rebuilt final set from composites (${String(body.filled ?? "?")}/4 slots).`
-                  : "Escalated to the manual workflow.";
+                  : action === "judge"
+                    ? "Judge run complete — refresh shows the outcome (delivered or needs review)."
+                    : "Escalated to the manual workflow.";
           setReviewMsg({ ok: true, text });
           setReviewSelection(new Set());
           await refreshOrders();
@@ -1093,6 +1098,36 @@ export default function PortraitOpsDashboard({
                   Escalate to Manual
                 </button>
               </div>
+
+              {selected.status === "processing_final_edit" &&
+                (selected.promptOptions.final_edit_results ?? []).filter(Boolean)
+                  .length === 4 && (
+                  <div className="flex items-center justify-between gap-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+                    <p className="text-xs text-amber-200">
+                      All 4 final results are present but the judge hasn&apos;t
+                      run — this order looks stuck.
+                    </p>
+                    <button
+                      type="button"
+                      disabled={reviewBusy !== null}
+                      onClick={() => void reviewAction("judge")}
+                      className="shrink-0 rounded-lg bg-amber-500/20 px-4 py-2 text-xs font-semibold text-amber-200 ring-1 ring-amber-500/40 hover:bg-amber-500/30 disabled:opacity-50"
+                    >
+                      {reviewBusy === "judge" ? "Judging…" : "Run judge now"}
+                    </button>
+                  </div>
+                )}
+              {reviewMsg && selected.status === "processing_final_edit" && (
+                <div
+                  className={`rounded-lg border px-4 py-3 text-xs ${
+                    reviewMsg.ok
+                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+                      : "border-red-500/30 bg-red-500/10 text-red-200"
+                  }`}
+                >
+                  {reviewMsg.text}
+                </div>
+              )}
 
               <div className="grid gap-3 sm:grid-cols-2">
                 {AUTONOMOUS_PIPELINE.map((pipe) => {

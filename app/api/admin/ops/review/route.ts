@@ -1,5 +1,6 @@
 import {
   deliverResults,
+  judgeAndDeliver,
   resubmitFinalEditForIndices,
   type PipelineModel,
 } from "@/lib/falPipeline";
@@ -108,7 +109,7 @@ export async function POST(request: Request) {
     if (!Number.isFinite(modelId) || modelId <= 0) {
       return NextResponse.json({ error: "Invalid modelId" }, { status: 400 });
     }
-    if (!["approve", "rerun", "escalate", "repair"].includes(action)) {
+    if (!["approve", "rerun", "escalate", "repair", "judge"].includes(action)) {
       return NextResponse.json({ error: "Invalid action" }, { status: 400 });
     }
 
@@ -150,6 +151,27 @@ export async function POST(request: Request) {
         filled: merged.filter(Boolean).length,
         slots: merged,
       });
+    }
+
+    if (action === "judge") {
+      const urls = slots.filter(Boolean);
+      if (urls.length < PARALLEL) {
+        return NextResponse.json(
+          {
+            error: `Cannot run judge: final URL set incomplete (${urls.length}/${PARALLEL}).`,
+            incomplete: true,
+          },
+          { status: 400 }
+        );
+      }
+      await logReviewEvent(admin, {
+        userId: model.user_id,
+        modelId,
+        eventType: "judge_kicked",
+        message: "Operator manually triggered the judge",
+      });
+      await judgeAndDeliver(model, slots);
+      return NextResponse.json({ success: true, judged: true });
     }
 
     if (action === "approve") {

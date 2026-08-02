@@ -42,7 +42,7 @@ function groupRecentEvents(
     const mid = ev.model_id;
     if (mid == null || !allowed.has(mid)) continue;
     const n = counts.get(mid) ?? 0;
-    if (n >= 10) continue;
+    if (n >= 30) continue;
     counts.set(mid, n + 1);
     const list = grouped.get(mid) ?? [];
     list.push(ev);
@@ -88,6 +88,7 @@ function toPromptOptions(raw: Json | null): Order["promptOptions"] {
     badge_url: str("badge_url"),
     patch_url: str("patch_url"),
     brass_url: str("brass_url"),
+    jacket_url: str("jacket_url"),
     base_image_urls: Array.isArray(o.base_image_urls)
       ? (o.base_image_urls as unknown[]).filter(
           (x): x is string => typeof x === "string"
@@ -97,6 +98,23 @@ function toPromptOptions(raw: Json | null): Order["promptOptions"] {
       ? (o.final_results as unknown[]).filter(
           (x): x is string => typeof x === "string"
         )
+      : undefined,
+    // Review-panel fields — must match the /api/admin/ops/orders shape or the
+    // panel renders "0/4 incomplete" from the SSR payload until a client refresh.
+    final_edit_results: Array.isArray(o.final_edit_results)
+      ? (o.final_edit_results as unknown[]).map((x) =>
+          typeof x === "string" ? x : ""
+        )
+      : undefined,
+    judge_round:
+      typeof o.judge_round === "number" && Number.isFinite(o.judge_round)
+        ? o.judge_round
+        : undefined,
+    judge_scores_round1: Array.isArray(o.judge_scores_round1)
+      ? (o.judge_scores_round1 as Order["promptOptions"]["judge_scores_round1"])
+      : undefined,
+    judge_scores_final: Array.isArray(o.judge_scores_final)
+      ? (o.judge_scores_final as Order["promptOptions"]["judge_scores_final"])
       : undefined,
   };
 }

@@ -617,6 +617,64 @@ export async function resubmitFinalEditForIndices(
   });
 }
 
+/**
+ * Recovery sweep: find orders stuck in processing_final_edit with all 4
+ * results present but no judge run (e.g. the merge RPC never signaled
+ * completion), and kick the judge for each. Skips orders whose last
+ * final_edit webhook is fresher than `minQuietSeconds` to avoid racing an
+ * in-flight completion.
+ */
+export async function sweepStuckJudges(minQuietSeconds = 180): Promise<number[]> {
+  const supabase = adminClient();
+  const { data: candidates, error } = await supabase
+    .from("models")
+    .select("*")
+    .eq("status", "processing_final_edit")
+    .limit(50);
+  if (error) {
+    console.error("[falPipeline] sweepStuckJudges query failed", error);
+    return [];
+  }
+
+  const kicked: number[] = [];
+  for (const model of candidates ?? []) {
+    if (!model.user_id) continue;
+    const prev = asPromptJson(model.prompt_options);
+    const slots = Array.isArray(prev.final_edit_results) ? prev.final_edit_results : [];
+    const urls = Array.from({ length: PARALLEL }, (_, i) => {
+      const x = slots[i];
+      return typeof x === "string" && x.length > 0 ? x : "";
+    });
+    if (urls.some((u) => !u)) continue;
+
+    const { data: lastEv } = await supabase
+      .from("pipeline_events")
+      .select("created_at")
+      .eq("model_id", model.id)
+      .eq("stage", "final_edit")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (lastEv?.created_at) {
+      const ageMs = Date.now() - new Date(lastEv.created_at).getTime();
+      if (ageMs < minQuietSeconds * 1000) continue;
+    }
+
+    console.log("[falPipeline] sweepStuckJudges kicking judge", { modelId: model.id });
+    await logEvent(supabase, {
+      userId: model.user_id,
+      modelId: model.id,
+      stage: "judge",
+      eventType: "sweep_kick",
+      message: "Recovery sweep: 4/4 results present with no judge run — running judge now",
+      payload: { urls_present: 4 },
+    });
+    await judgeAndDeliver(model, urls);
+    kicked.push(model.id);
+  }
+  return kicked;
+}
+
 /** Site origin for customer-facing links; never throws. */
 function siteOrigin(): string {
   const raw = process.env.DEPLOYMENT_URL?.trim() || "badgeshot.vercel.app";
