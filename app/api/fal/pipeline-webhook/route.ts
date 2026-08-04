@@ -3,7 +3,8 @@ import { compositeOntoBackdrop } from "@/lib/compositeBackdrop";
 import { parseModelPromptOptions } from "@/lib/modelPromptOptions";
 import {
   handleFalPipeline,
-  judgeAndDeliver,
+  judgeAndAwaitSelection,
+  submitEditForSlot,
   submitFinalEditStage,
   type OrchestratorContext,
 } from "@/lib/falPipeline";
@@ -27,7 +28,16 @@ type FalWebhookBody = {
   };
 };
 
-type PipelineStage = "base_generation" | "final_edit";
+type PipelineStage = "base_generation" | "final_edit" | "base_regen";
+
+function parseNumCandidates(raw: unknown): { numCandidates: number } {
+  const o =
+    raw && typeof raw === "object" && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : {};
+  const n = typeof o.num_candidates === "number" && o.num_candidates >= 4 ? o.num_candidates : 4;
+  return { numCandidates: n };
+}
 
 const PARALLEL = PARALLEL_IMAGE_COUNT;
 
@@ -241,7 +251,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true }, { status: 200 });
     }
 
-    if (stage !== "base_generation" && stage !== "final_edit") {
+    if (stage !== "base_generation" && stage !== "final_edit" && stage !== "base_regen") {
       console.log("[pipeline-webhook] ignored stage", { modelId, stage });
       return NextResponse.json({ ok: true }, { status: 200 });
     }
@@ -250,10 +260,10 @@ export async function POST(request: Request) {
 
     if (pipelineStage === "base_generation") {
       const urls = extractAllImageUrls(body.payload);
-      console.log("[pipeline-webhook] base_generation", { modelId, imageCount: urls.length });
+      console.log("[pipeline-webhook] base_generation batch", { modelId, imageCount: urls.length, offset: index ?? 0 });
 
-      if (urls.length < PARALLEL) {
-        const msg = `base_generation: expected ${PARALLEL} image URLs, got ${urls.length}`;
+      if (urls.length === 0) {
+        const msg = "base_generation: webhook carried no image URLs";
         console.error("[pipeline-webhook]", msg);
         await insertPipelineEvent(supabase, {
           userId,
@@ -267,64 +277,122 @@ export async function POST(request: Request) {
         return NextResponse.json({ ok: true }, { status: 200 });
       }
 
-      const { data: fullModel } = await supabase.from("models").select("*").eq("id", modelId).single();
-      if (!fullModel) {
+      const { data: modelForBase } = await supabase
+        .from("models")
+        .select("user_id, prompt_options")
+        .eq("id", modelId)
+        .single();
+      if (!modelForBase?.user_id) {
         console.error("[pipeline-webhook] model not found for base_generation", { modelId });
         return NextResponse.json({ ok: true }, { status: 200 });
       }
+      const basePo = parseNumCandidates(modelForBase.prompt_options);
+      const offset = typeof index === "number" ? index : 0;
 
-      const prevPo =
-        fullModel.prompt_options && typeof fullModel.prompt_options === "object" && !Array.isArray(fullModel.prompt_options)
-          ? { ...(fullModel.prompt_options as Record<string, unknown>) }
-          : {};
-
-      const { error: updErr } = await supabase
-        .from("models")
-        .update({
-          prompt_options: {
-            ...prevPo,
-            base_image_urls: urls.slice(0, PARALLEL),
-          } as Json,
-        })
-        .eq("id", modelId)
-        .eq("user_id", userId);
-
-      if (updErr) {
-        console.error("[pipeline-webhook] base_generation update failed", updErr);
-        await insertPipelineEvent(supabase, {
-          userId,
-          modelId,
-          stage: "base_generation",
-          eventType: "webhook_error",
-          message: updErr.message,
-          requestId: body.request_id ?? null,
-          payload: { details: updErr.message },
+      let becameCompleteAny = false;
+      for (let j = 0; j < urls.length; j++) {
+        const slot = offset + j;
+        if (slot >= basePo.numCandidates) break;
+        const { data: mergeData, error: mergeErr } = await supabase.rpc("merge_pipeline_indexed_result", {
+          p_model_id: modelId,
+          p_results_key: "base_candidate_results",
+          p_slot: slot,
+          p_expected: basePo.numCandidates,
+          p_url: urls[j],
+          p_user_id: modelForBase.user_id,
         });
-        return NextResponse.json({ ok: true }, { status: 200 });
+        if (mergeErr) {
+          console.error("[pipeline-webhook] base candidate merge failed", { slot, msg: mergeErr.message });
+          await insertPipelineEvent(supabase, {
+            userId,
+            modelId,
+            stage: "base_generation",
+            eventType: "webhook_error",
+            message: `Candidate merge failed for slot ${slot}: ${mergeErr.message}`,
+            requestId: body.request_id ?? null,
+            payload: { slot },
+          });
+          continue;
+        }
+        if (mergeData?.[0]?.became_complete) becameCompleteAny = true;
       }
 
       await insertPipelineEvent(supabase, {
         userId,
         modelId,
         stage: "base_generation",
-        eventType: "completed",
-        message: "Base generation images stored",
+        eventType: "webhook_received",
+        message: `Base candidates ${offset + 1}–${offset + urls.length} of ${basePo.numCandidates} stored`,
         requestId: body.request_id ?? null,
-        payload: { base_image_urls_count: PARALLEL },
+        payload: { offset, count: urls.length, becameCompleteAny },
       });
 
-      const { data: after } = await supabase.from("models").select("*").eq("id", modelId).single();
-      if (after) {
-        console.log("[pipeline-webhook] base_generation → submitFinalEditStage", { modelId });
-        await submitFinalEditStage(after);
+      if (becameCompleteAny) {
+        const { data: after } = await supabase.from("models").select("*").eq("id", modelId).single();
+        if (after) {
+          await insertPipelineEvent(supabase, {
+            userId,
+            modelId,
+            stage: "base_generation",
+            eventType: "completed",
+            message: `All ${basePo.numCandidates} base candidates stored — ranking and editing`,
+            requestId: body.request_id ?? null,
+            payload: { numCandidates: basePo.numCandidates },
+          });
+          console.log("[pipeline-webhook] base candidates complete → submitFinalEditStage", { modelId });
+          await submitFinalEditStage(after);
+        }
       }
 
       return NextResponse.json({ ok: true }, { status: 200 });
     }
 
+    if (pipelineStage === "base_regen") {
+      const regenUrl = extractImageUrl(body.payload) ?? extractAllImageUrls(body.payload)[0];
+      if (!regenUrl || typeof index !== "number") {
+        console.error("[pipeline-webhook] base_regen: missing image or index", { modelId, index });
+        return NextResponse.json({ ok: true }, { status: 200 });
+      }
+      const { data: modelForRegen } = await supabase.from("models").select("*").eq("id", modelId).single();
+      if (!modelForRegen?.user_id) {
+        return NextResponse.json({ ok: true }, { status: 200 });
+      }
+      const prevRegen =
+        modelForRegen.prompt_options &&
+        typeof modelForRegen.prompt_options === "object" &&
+        !Array.isArray(modelForRegen.prompt_options)
+          ? { ...(modelForRegen.prompt_options as Record<string, unknown>) }
+          : {};
+      const portraits = Array.isArray(prevRegen.edit_portrait_urls)
+        ? [...prevRegen.edit_portrait_urls]
+        : [];
+      portraits[index] = regenUrl;
+      await supabase
+        .from("models")
+        .update({
+          prompt_options: { ...prevRegen, edit_portrait_urls: portraits } as Json,
+        })
+        .eq("id", modelId)
+        .eq("user_id", modelForRegen.user_id);
+      await insertPipelineEvent(supabase, {
+        userId,
+        modelId,
+        stage: "base_generation",
+        eventType: "regen_received",
+        message: `Fresh base portrait for slot ${index + 1} — resubmitting its edit`,
+        requestId: body.request_id ?? null,
+        payload: { index },
+      });
+      const { data: forEdit } = await supabase.from("models").select("*").eq("id", modelId).single();
+      if (forEdit) {
+        await submitEditForSlot(forEdit, index, regenUrl);
+      }
+      return NextResponse.json({ ok: true }, { status: 200 });
+    }
+
     // final_edit
-    if (typeof index !== "number" || index < 0 || index >= PARALLEL) {
-      const msg = `final_edit: invalid metadata.index (need 0..${PARALLEL - 1})`;
+    if (typeof index !== "number" || index < 0) {
+      const msg = "final_edit: invalid metadata.index";
       console.error("[pipeline-webhook]", msg, { modelId, index });
       await insertPipelineEvent(supabase, {
         userId,
@@ -369,7 +437,8 @@ export async function POST(request: Request) {
     const pipelineComplete =
       modelForMerge.status === "finished" ||
       modelForMerge.status === "complete" ||
-      modelForMerge.status === "needs_review";
+      modelForMerge.status === "needs_review" ||
+      modelForMerge.status === "awaiting_selection";
     if (pipelineComplete) {
       console.log(
         "[pipeline-webhook] final_edit webhook received after completion, ignoring",
@@ -387,6 +456,14 @@ export async function POST(request: Request) {
       !Array.isArray(modelForMerge.prompt_options)
         ? (modelForMerge.prompt_options as Record<string, unknown>)
         : {};
+    const editExpected =
+      typeof poRawForDedup.edit_count === "number" && poRawForDedup.edit_count >= PARALLEL
+        ? (poRawForDedup.edit_count as number)
+        : PARALLEL;
+    if (index >= editExpected) {
+      console.error("[pipeline-webhook] final_edit index out of range", { modelId, index, editExpected });
+      return NextResponse.json({ ok: true }, { status: 200 });
+    }
     const existingSlots = Array.isArray(poRawForDedup.final_edit_results)
       ? poRawForDedup.final_edit_results
       : [];
@@ -438,7 +515,7 @@ export async function POST(request: Request) {
       p_model_id: modelId,
       p_results_key: "final_edit_results",
       p_slot: index,
-      p_expected: 4,
+      p_expected: editExpected,
       p_url: resultUrl,
       p_user_id: modelForMerge.user_id,
     });
@@ -472,21 +549,21 @@ export async function POST(request: Request) {
         console.error("[pipeline-webhook] model missing before deliverResults", { modelId });
       } else {
         // Prefer the RPC's atomic snapshot (row.results) — re-reading
-        // prompt_options races with a concurrent judge re-edit clearing slots.
-        let finalUrls = resultsJsonToStrings(row.results, PARALLEL).filter((u) => u.length > 0);
-        if (finalUrls.length < PARALLEL) {
+        // prompt_options races with a concurrent re-edit clearing slots.
+        let finalUrls = resultsJsonToStrings(row.results, editExpected).filter((u) => u.length > 0);
+        if (finalUrls.length < editExpected) {
           const po =
             modelForDelivery.prompt_options &&
             typeof modelForDelivery.prompt_options === "object" &&
             !Array.isArray(modelForDelivery.prompt_options)
               ? (modelForDelivery.prompt_options as Record<string, unknown>)
               : {};
-          finalUrls = resultsJsonToStrings(po.final_edit_results, PARALLEL).filter((u) => u.length > 0);
+          finalUrls = resultsJsonToStrings(po.final_edit_results, editExpected).filter((u) => u.length > 0);
         }
 
-        if (finalUrls.length >= PARALLEL) {
-          console.log("[pipeline-webhook] judgeAndDeliver", { modelId, count: finalUrls.length });
-          await judgeAndDeliver(modelForDelivery, finalUrls.slice(0, PARALLEL));
+        if (finalUrls.length >= editExpected) {
+          console.log("[pipeline-webhook] judgeAndAwaitSelection", { modelId, count: finalUrls.length });
+          await judgeAndAwaitSelection(modelForDelivery, finalUrls.slice(0, editExpected));
         } else {
           console.error("[pipeline-webhook] incomplete final URLs after merge", {
             modelId,

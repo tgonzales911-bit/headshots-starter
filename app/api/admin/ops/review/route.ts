@@ -1,6 +1,7 @@
 import {
   deliverResults,
-  judgeAndDeliver,
+  judgeAndAwaitSelection,
+  resubmitBaseGenForSlots,
   resubmitFinalEditForIndices,
   type PipelineModel,
 } from "@/lib/falPipeline";
@@ -27,9 +28,9 @@ function serviceClient(): SupabaseClient<Database> {
   });
 }
 
-function slotStrings(raw: unknown): string[] {
+function slotStrings(raw: unknown, expected: number): string[] {
   const arr = Array.isArray(raw) ? raw : [];
-  return Array.from({ length: PARALLEL }, (_, i) => {
+  return Array.from({ length: expected }, (_, i) => {
     const x = arr[i];
     return typeof x === "string" ? x : "";
   });
@@ -71,7 +72,7 @@ export async function POST(request: Request) {
     if (!Number.isFinite(modelId) || modelId <= 0) {
       return NextResponse.json({ error: "Invalid modelId" }, { status: 400 });
     }
-    if (!["approve", "rerun", "escalate", "repair", "judge"].includes(action)) {
+    if (!["approve", "rerun", "rerun_base", "escalate", "repair", "judge", "select"].includes(action)) {
       return NextResponse.json({ error: "Invalid action" }, { status: 400 });
     }
 
@@ -88,12 +89,20 @@ export async function POST(request: Request) {
       model.prompt_options && typeof model.prompt_options === "object" && !Array.isArray(model.prompt_options)
         ? (model.prompt_options as Record<string, unknown>)
         : {};
-    const slots = slotStrings(prev.final_edit_results);
+    const editExpected =
+      typeof prev.edit_count === "number" && prev.edit_count >= PARALLEL
+        ? prev.edit_count
+        : Math.max(
+            Array.isArray(prev.final_edit_results) ? prev.final_edit_results.length : 0,
+            PARALLEL
+          );
+    const slots = slotStrings(prev.final_edit_results, editExpected);
 
     if (action === "repair") {
       const { slots: rebuilt, found } = await rebuildSlotsFromComposites(admin, {
         userId: model.user_id,
         modelId,
+        expected: editExpected,
       });
       // Keep existing non-empty slots where the rebuild found nothing.
       const merged = slots.map((s, i) => rebuilt[i] || s);
@@ -120,10 +129,10 @@ export async function POST(request: Request) {
 
     if (action === "judge") {
       const urls = slots.filter(Boolean);
-      if (urls.length < PARALLEL) {
+      if (urls.length < editExpected) {
         return NextResponse.json(
           {
-            error: `Cannot run judge: final URL set incomplete (${urls.length}/${PARALLEL}).`,
+            error: `Cannot run judge: final URL set incomplete (${urls.length}/${editExpected}).`,
             incomplete: true,
           },
           { status: 400 }
@@ -135,11 +144,66 @@ export async function POST(request: Request) {
         eventType: "judge_kicked",
         message: "Operator manually triggered the judge",
       });
-      await judgeAndDeliver(model, slots);
+      await judgeAndAwaitSelection(model, slots);
       return NextResponse.json({ success: true, judged: true });
     }
 
+    if (action === "select") {
+      const indicesRaw = Array.isArray(body?.indices) ? body!.indices : [];
+      const indices = indicesRaw
+        .map((n) => Number(n))
+        .filter((n) => Number.isInteger(n) && n >= 0 && n < editExpected);
+      const unique = Array.from(new Set(indices));
+      if (unique.length !== PARALLEL) {
+        return NextResponse.json(
+          { error: `Select exactly ${PARALLEL} images (got ${unique.length}).` },
+          { status: 400 }
+        );
+      }
+      const picks = unique.map((i) => slots[i]);
+      if (picks.some((u) => !u)) {
+        return NextResponse.json(
+          { error: "One or more selected slots have no result image." },
+          { status: 400 }
+        );
+      }
+      await logReviewEvent(admin, {
+        userId: model.user_id,
+        modelId,
+        eventType: "selection_delivered",
+        message: `Operator selected images ${unique.map((i) => i + 1).join(", ")} for delivery`,
+        payload: { indices: unique },
+      });
+      await deliverResults(model, picks);
+      return NextResponse.json({ success: true, delivered: true, indices: unique });
+    }
+
+    if (action === "rerun_base") {
+      const indicesRaw = Array.isArray(body?.indices) ? body!.indices : [];
+      const indices = indicesRaw
+        .map((n) => Number(n))
+        .filter((n) => Number.isInteger(n) && n >= 0 && n < editExpected);
+      if (indices.length === 0) {
+        return NextResponse.json({ error: "indices required for rerun_base" }, { status: 400 });
+      }
+      await logReviewEvent(admin, {
+        userId: model.user_id,
+        modelId,
+        eventType: "review_rerun_base",
+        message: `Operator requested fresh base generation for image(s) ${indices.map((i) => i + 1).join(", ")}`,
+        payload: { indices },
+      });
+      await resubmitBaseGenForSlots(model, indices);
+      return NextResponse.json({ success: true, resubmitted: indices });
+    }
+
     if (action === "approve") {
+      if (editExpected !== PARALLEL) {
+        return NextResponse.json(
+          { error: `This order has ${editExpected} candidates — use select to pick exactly ${PARALLEL}.` },
+          { status: 400 }
+        );
+      }
       const urls = slots.filter(Boolean);
       if (urls.length < PARALLEL) {
         return NextResponse.json(

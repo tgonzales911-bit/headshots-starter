@@ -700,7 +700,7 @@ export default function PortraitOpsDashboard({
 
   const reviewAction = useCallback(
     async (
-      action: "approve" | "rerun" | "escalate" | "repair" | "judge",
+      action: "approve" | "rerun" | "rerun_base" | "escalate" | "repair" | "judge" | "select",
       indices?: number[]
     ) => {
       if (!selected) return;
@@ -722,13 +722,17 @@ export default function PortraitOpsDashboard({
           const text =
             action === "approve"
               ? "Approved — delivery email sent."
-              : action === "rerun"
-                ? `Re-edit queued for image(s) ${(indices ?? []).map((i) => i + 1).join(", ")}. The judge will re-score when they finish.`
-                : action === "repair"
-                  ? `Rebuilt final set from composites (${String(body.filled ?? "?")}/4 slots).`
-                  : action === "judge"
-                    ? "Judge run complete — refresh shows the outcome (delivered or needs review)."
-                    : "Escalated to the manual workflow.";
+              : action === "select"
+                ? `Delivered images ${(indices ?? []).map((i) => i + 1).join(", ")} — email sent.`
+                : action === "rerun"
+                  ? `Re-edit queued for image(s) ${(indices ?? []).map((i) => i + 1).join(", ")}. QC re-runs when they finish.`
+                  : action === "rerun_base"
+                    ? `Fresh base generation queued for image(s) ${(indices ?? []).map((i) => i + 1).join(", ")} — each will re-edit and re-composite automatically.`
+                    : action === "repair"
+                      ? `Rebuilt final set from composites (${String(body.filled ?? "?")} slots).`
+                      : action === "judge"
+                        ? "Judge run complete — refresh shows the outcome."
+                        : "Escalated to the manual workflow.";
           setReviewMsg({ ok: true, text });
           setReviewSelection(new Set());
           await refreshOrders();
@@ -909,23 +913,29 @@ export default function PortraitOpsDashboard({
             <div className="flex h-full min-h-[240px] flex-col items-center justify-center text-center text-zinc-500">
               <p className="text-sm">Select an order to view its workflow.</p>
             </div>
-          ) : selected.status === "needs_review" ? (
-            <div className="mx-auto max-w-5xl space-y-5">
+          ) : selected.status === "needs_review" ||
+            selected.status === "awaiting_selection" ? (
+            <div className="mx-auto max-w-6xl space-y-5">
               <div>
                 <h2 className="text-lg font-semibold text-amber-300">
-                  Needs review — judge flagged this order
+                  {selected.status === "awaiting_selection"
+                    ? "Choose the final four"
+                    : "Needs review — judge flagged this order"}
                 </h2>
                 <p className="text-xs text-zinc-500">
                   {selected.promptOptions.name ?? selected.userEmail} ·{" "}
-                  {selected.promptOptions.department ?? "—"} · judge round{" "}
-                  {selected.promptOptions.judge_round ?? 0}
+                  {selected.promptOptions.department ?? "—"}
+                  {selected.status === "awaiting_selection"
+                    ? " · check exactly 4 images, then Deliver"
+                    : ` · judge round ${selected.promptOptions.judge_round ?? 0}`}
                 </p>
               </div>
 
               {(() => {
-                const slots = Array.from({ length: 4 }, (_, i) =>
-                  selected.promptOptions.final_edit_results?.[i] ?? ""
-                );
+                const isSelection = selected.status === "awaiting_selection";
+                const rawSlots = selected.promptOptions.final_edit_results ?? [];
+                const slotCount = Math.max(rawSlots.length, 4);
+                const slots = Array.from({ length: slotCount }, (_, i) => rawSlots[i] ?? "");
                 const incomplete = slots.some((s) => !s);
                 const r1 = selected.promptOptions.judge_scores_round1 ?? [];
                 const r2 = selected.promptOptions.judge_scores_final ?? [];
@@ -935,11 +945,12 @@ export default function PortraitOpsDashboard({
                   <>
                     {incomplete && (
                       <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-xs text-red-200">
-                        This order&apos;s final URL set is incomplete (
-                        {slots.filter(Boolean).length}/4). Partial results are
-                        shown below. Use <strong>Repair from composites</strong>{" "}
-                        to rebuild the set from stored composite files before
-                        approving.
+                        This order&apos;s result set is incomplete (
+                        {slots.filter(Boolean).length}/{slotCount}). Partial
+                        results are shown below. Use{" "}
+                        <strong>Repair from composites</strong> to rebuild the
+                        set from stored composite files, or re-run the missing
+                        slots.
                       </div>
                     )}
                     {reviewMsg && (
@@ -973,7 +984,7 @@ export default function PortraitOpsDashboard({
                                   onChange={() => toggleReviewSelection(i)}
                                   className="accent-[#c9a84c]"
                                 />
-                                re-run
+                                {isSelection ? "pick" : "re-run"}
                               </label>
                             </div>
                             {url ? (
@@ -1031,18 +1042,35 @@ export default function PortraitOpsDashboard({
                       })}
                     </div>
                     <p className="text-[11px] text-zinc-500">
-                      Hover any score chip for the judge&apos;s reason. R1 = first
-                      judge pass, R2 = after re-edit.
+                      Hover any score chip for the judge&apos;s reason.
+                      {isSelection
+                        ? " Check exactly 4 images to deliver — or check weak ones and re-run their edit or base generation."
+                        : " R1 = first judge pass, R2 = after re-edit."}
                     </p>
                     <div className="flex flex-wrap items-center gap-3">
-                      <button
-                        type="button"
-                        disabled={reviewBusy !== null || incomplete}
-                        onClick={() => void reviewAction("approve")}
-                        className="rounded-lg bg-emerald-600/80 px-5 py-2.5 text-xs font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        {reviewBusy === "approve" ? "Delivering…" : "Approve & Deliver"}
-                      </button>
+                      {isSelection ? (
+                        <button
+                          type="button"
+                          disabled={reviewBusy !== null || reviewSelection.size !== 4}
+                          onClick={() =>
+                            void reviewAction("select", Array.from(reviewSelection).sort())
+                          }
+                          className="rounded-lg bg-emerald-600/80 px-5 py-2.5 text-xs font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          {reviewBusy === "select"
+                            ? "Delivering…"
+                            : `Deliver selected (${reviewSelection.size}/4)`}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={reviewBusy !== null || incomplete}
+                          onClick={() => void reviewAction("approve")}
+                          className="rounded-lg bg-emerald-600/80 px-5 py-2.5 text-xs font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          {reviewBusy === "approve" ? "Delivering…" : "Approve & Deliver"}
+                        </button>
+                      )}
                       <button
                         type="button"
                         disabled={reviewBusy !== null || reviewSelection.size === 0}
@@ -1053,7 +1081,19 @@ export default function PortraitOpsDashboard({
                       >
                         {reviewBusy === "rerun"
                           ? "Queueing…"
-                          : `Re-run edits (${reviewSelection.size} selected)`}
+                          : `Re-run edits (${reviewSelection.size})`}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={reviewBusy !== null || reviewSelection.size === 0}
+                        onClick={() =>
+                          void reviewAction("rerun_base", Array.from(reviewSelection).sort())
+                        }
+                        className="rounded-lg border border-purple-500/50 bg-purple-500/15 px-5 py-2.5 text-xs font-semibold text-purple-300 hover:bg-purple-500/25 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {reviewBusy === "rerun_base"
+                          ? "Queueing…"
+                          : `Re-run base gen (${reviewSelection.size})`}
                       </button>
                       <button
                         type="button"
@@ -1100,8 +1140,10 @@ export default function PortraitOpsDashboard({
               </div>
 
               {selected.status === "processing_final_edit" &&
-                (selected.promptOptions.final_edit_results ?? []).filter(Boolean)
-                  .length === 4 && (
+                (selected.promptOptions.final_edit_results ?? []).length > 0 &&
+                (selected.promptOptions.final_edit_results ?? []).every(
+                  (u) => u && u.length > 0
+                ) && (
                   <div className="flex items-center justify-between gap-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
                     <p className="text-xs text-amber-200">
                       All 4 final results are present but the judge hasn&apos;t

@@ -1,9 +1,8 @@
 import { PARALLEL_IMAGE_COUNT } from "@/lib/constants";
 import {
-  failingIndices,
   JUDGE_THRESHOLD,
-  runJudge,
-  type JudgeScore,
+  rankCandidatesWithRetry,
+  runJudgeWithRetry,
 } from "@/lib/judgeNode";
 import { buildDeliveryEmailHtml, DELIVERY_EMAIL_SUBJECT } from "@/lib/deliveryEmail";
 import { rebuildSlotsFromComposites } from "@/lib/repairComposites";
@@ -16,7 +15,7 @@ import { Resend } from "resend";
 /** models row; LoRA weights URL lives in `lora_url` (alias `weights_url` in docs). */
 export type PipelineModel = Database["public"]["Tables"]["models"]["Row"];
 
-export type PipelineStage = "base_generation" | "final_edit";
+export type PipelineStage = "base_generation" | "final_edit" | "base_regen";
 
 export type FalPipelineWebhookStage = "trainer" | PipelineStage;
 
@@ -59,6 +58,13 @@ const trainerLearningRate = Number(process.env.FAL_TRAINER_LEARNING_RATE) || nul
 // Inference LoRA strength; raise toward 1.1-1.25 to pull outputs closer to
 // the trained identity at some cost to prompt adherence.
 const baseLoraScale = Number(process.env.FAL_BASE_LORA_SCALE) || 1.0;
+// Candidate pool size (base generations per order) and how many of the
+// top-ranked candidates get the full edit+composite treatment.
+const numCandidates = Math.max(4, Number(process.env.FAL_BASE_NUM_CANDIDATES) || 8);
+const editCandidates = Math.min(
+  numCandidates,
+  Math.max(4, Number(process.env.FAL_EDIT_CANDIDATES) || 6)
+);
 
 function required(name: keyof typeof env): string {
   const value = env[name];
@@ -307,19 +313,30 @@ export async function submitBaseGeneration(model: PipelineModel): Promise<void> 
         rank: typeof prevPo.rank === "string" ? prevPo.rank : null,
       })}`;
 
-  const webhookUrl = pipelineWebhookUrl(userId, modelId, "base_generation");
+  // Candidate pool: the endpoint caps num_images at 4 per call, so N
+  // candidates are generated in ceil(N/4) batched calls. Each webhook carries
+  // its batch offset in metadata.index; results merge into
+  // base_candidate_results slots via the atomic RPC.
+  const batches: Array<{ offset: number; count: number }> = [];
+  for (let offset = 0; offset < numCandidates; offset += 4) {
+    batches.push({ offset, count: Math.min(4, numCandidates - offset) });
+  }
 
-  const requestId = await submitFal(
-    env.baseGenModel,
-    {
-      prompt: fluxPrompt,
-      num_images: PARALLEL,
-      image_size: { width: 832, height: 1248 },
-      loras: [{ path: weightsUrl, scale: baseLoraScale }],
-      guidance_scale: baseGenGuidanceScale,
-      num_inference_steps: baseGenSteps,
-    },
-    webhookUrl
+  const requestIds = await Promise.all(
+    batches.map((b) =>
+      submitFal(
+        env.baseGenModel,
+        {
+          prompt: fluxPrompt,
+          num_images: b.count,
+          image_size: { width: 832, height: 1248 },
+          loras: [{ path: weightsUrl, scale: baseLoraScale }],
+          guidance_scale: baseGenGuidanceScale,
+          num_inference_steps: baseGenSteps,
+        },
+        pipelineWebhookUrl(userId, modelId, "base_generation", b.offset)
+      )
+    )
   );
 
   await supabase
@@ -327,9 +344,12 @@ export async function submitBaseGeneration(model: PipelineModel): Promise<void> 
     .update({
       prompt_options: {
         ...prevPo,
-        base_request_ids: [requestId],
+        base_request_ids: requestIds,
+        num_candidates: numCandidates,
+        edit_count: editCandidates,
+        base_candidate_results: [],
       } as Json,
-      latest_request_id: requestId,
+      latest_request_id: requestIds[requestIds.length - 1] ?? null,
       status: "generating",
     })
     .eq("id", modelId)
@@ -340,11 +360,11 @@ export async function submitBaseGeneration(model: PipelineModel): Promise<void> 
     modelId,
     stage: "base_generation",
     eventType: "submit_success",
-    requestId,
-    message: "Base generation queued",
-    payload: { modelId, stage: "base_generation" },
+    requestId: requestIds[0] ?? null,
+    message: `Base generation queued: ${numCandidates} candidates in ${batches.length} batch(es)`,
+    payload: { modelId, stage: "base_generation", requestIds, numCandidates },
   });
-  console.log("[falPipeline] submitBaseGeneration done", { modelId, requestId });
+  console.log("[falPipeline] submitBaseGeneration done", { modelId, requestIds });
 }
 
 /**
@@ -363,41 +383,93 @@ export async function submitFinalEditStage(model: PipelineModel): Promise<void> 
   const po = parseModelPromptOptions(model.prompt_options);
   const prev = asPromptJson(model.prompt_options);
 
-  const rawBase = prev.base_image_urls;
-  const portraitUrls = (Array.isArray(rawBase) ? rawBase : [])
+  const candidateUrls = (Array.isArray(prev.base_candidate_results) ? prev.base_candidate_results : [])
+    .map((u) => (typeof u === "string" ? u.trim() : ""));
+  const presentCandidates = candidateUrls.filter(Boolean);
+
+  // Legacy fallback: orders trained before the candidate pool stored
+  // base_image_urls (exactly 4) and skip ranking.
+  const legacyBase = (Array.isArray(prev.base_image_urls) ? prev.base_image_urls : [])
     .map((u) => (typeof u === "string" ? u.trim() : ""))
     .filter(Boolean);
 
-  if (portraitUrls.length < PARALLEL) {
-    console.error("[falPipeline] submitFinalEditStage: need 4 base portrait URLs", {
+  const pool = presentCandidates.length >= PARALLEL ? presentCandidates : legacyBase;
+  if (pool.length < PARALLEL) {
+    console.error("[falPipeline] submitFinalEditStage: not enough base portraits", {
       modelId,
-      count: portraitUrls.length,
+      count: pool.length,
     });
-    await failModel(supabase, modelId, userId, `Final edit: expected ${PARALLEL} base_image_urls, got ${portraitUrls.length}.`);
+    await failModel(supabase, modelId, userId, `Final edit: expected at least ${PARALLEL} base portraits, got ${pool.length}.`);
     return;
   }
 
   const badgeUrl = po.badge_url?.trim();
   const patchUrl = po.patch_url?.trim();
   const brassUrl = po.brass_url?.trim();
-  const jacketUrl = po.jacket_url?.trim();
   if (!badgeUrl || !patchUrl || !brassUrl) {
     console.error("[falPipeline] submitFinalEditStage: missing reference URLs", { modelId });
     await failModel(supabase, modelId, userId, "Final edit: badge_url, patch_url, and brass_url are required.");
     return;
   }
 
-  const prompt = buildGeminiEditPrompt({ hasJacket: Boolean(jacketUrl) });
-  const referenceUrls = [
-    badgeUrl,
-    patchUrl,
-    brassUrl,
-    ...(jacketUrl ? [jacketUrl] : []),
-  ];
-  const slice = portraitUrls.slice(0, PARALLEL);
+  // Ranked selection: comparative identity judge over the candidate pool.
+  // Fail-open: keep pool order if ranking is unavailable.
+  const selfieUrls = (Array.isArray(prev.selfie_urls) ? prev.selfie_urls : [])
+    .filter((s): s is string => typeof s === "string" && s.length > 0)
+    .slice(0, 4);
+
+  const targetCount = Math.min(
+    typeof prev.edit_count === "number" && prev.edit_count >= PARALLEL
+      ? prev.edit_count
+      : editCandidates,
+    pool.length
+  );
+
+  let orderedPortraits: string[];
+  if (pool.length > targetCount && selfieUrls.length > 0) {
+    const { result: ranking, error: rankError } = await rankCandidatesWithRetry({
+      candidateUrls: pool,
+      selfieUrls,
+    });
+    if (ranking) {
+      orderedPortraits = ranking.ranking.map((i) => pool[i]).filter(Boolean);
+      // If discards leave fewer than needed, backfill with unranked survivors.
+      if (orderedPortraits.length < targetCount) {
+        const used = new Set(orderedPortraits);
+        for (const u of pool) {
+          if (orderedPortraits.length >= targetCount) break;
+          if (!used.has(u)) orderedPortraits.push(u);
+        }
+      }
+      await logEvent(supabase, {
+        userId,
+        modelId,
+        stage: "judge",
+        eventType: "candidates_ranked",
+        message: `Ranked ${pool.length} candidates: ${ranking.discarded.length} discarded, editing top ${targetCount}`,
+        payload: { ranking: ranking.ranking, discarded: ranking.discarded, targetCount } as unknown as Record<string, unknown>,
+      });
+    } else {
+      orderedPortraits = pool;
+      await logEvent(supabase, {
+        userId,
+        modelId,
+        stage: "judge",
+        eventType: "rank_skipped",
+        message: `Candidate ranking unavailable — using generation order. Reason: ${rankError ?? "unknown"}`,
+        payload: { error: rankError },
+      });
+    }
+  } else {
+    orderedPortraits = pool;
+  }
+
+  const editPortraits = orderedPortraits.slice(0, targetCount);
+  const prompt = buildGeminiEditPrompt({ hasJacket: Boolean(po.jacket_url?.trim()) });
+  const referenceUrls = editReferenceUrls(po);
 
   const requestIds = await Promise.all(
-    slice.map((portraitUrl, index) =>
+    editPortraits.map((portraitUrl, index) =>
       submitFal(
         env.geminiEditModel,
         {
@@ -415,7 +487,9 @@ export async function submitFinalEditStage(model: PipelineModel): Promise<void> 
       prompt_options: {
         ...prev,
         final_edit_request_ids: requestIds,
-        final_edit_results: Array(PARALLEL).fill(""),
+        final_edit_results: Array(editPortraits.length).fill(""),
+        edit_portrait_urls: editPortraits,
+        edit_count: editPortraits.length,
       } as Json,
       status: "processing_final_edit",
       latest_request_id: requestIds[requestIds.length - 1] ?? null,
@@ -428,110 +502,111 @@ export async function submitFinalEditStage(model: PipelineModel): Promise<void> 
     modelId,
     stage: "final_edit",
     eventType: "submit_success",
-    message: "Final edit (Gemini) batch queued",
+    message: `Final edit (Gemini) batch queued: ${editPortraits.length} images`,
     payload: { modelId, stage: "final_edit", requestIds },
   });
   console.log("[falPipeline] submitFinalEditStage done", { modelId, requestIds });
 }
 
+/** Reference image list for the edit call (badge, patch, brass, optional jacket). */
+function editReferenceUrls(po: ReturnType<typeof parseModelPromptOptions>): string[] {
+  const jacketUrl = po.jacket_url?.trim();
+  return [
+    po.badge_url!.trim(),
+    po.patch_url!.trim(),
+    po.brass_url!.trim(),
+    ...(jacketUrl ? [jacketUrl] : []),
+  ];
+}
+
+/** Submit one Gemini edit for a single slot (rerun and base-regen paths). */
+export async function submitEditForSlot(
+  model: PipelineModel,
+  slot: number,
+  portraitUrl: string
+): Promise<string> {
+  const userId = model.user_id!;
+  const po = parseModelPromptOptions(model.prompt_options);
+  const prompt = buildGeminiEditPrompt({ hasJacket: Boolean(po.jacket_url?.trim()) });
+  return submitFal(
+    env.geminiEditModel,
+    {
+      prompt,
+      image_urls: [portraitUrl, ...editReferenceUrls(po)],
+    },
+    pipelineWebhookUrl(userId, model.id, "final_edit", slot)
+  );
+}
+
 /**
  * STAGE 3.5 — Judge node: score the 4 finals before delivery.
  * Round 0: any metric < 7 triggers ONE re-edit of the failing images.
- * Round 1: still failing → flag the order for manual review, no auto-delivery.
- * Judge unavailable/error → fail open and deliver (never strand a paid order).
+ * All edited+composited candidates get QC scores (with retry/backoff), then
+ * the order parks in awaiting_selection for a human to pick the final 4.
+ * Judge unavailable after retries → still awaiting_selection, just unscored.
  */
-export async function judgeAndDeliver(model: PipelineModel, finalUrls: string[]): Promise<void> {
+export async function judgeAndAwaitSelection(model: PipelineModel, finalUrls: string[]): Promise<void> {
   const userId = model.user_id;
   if (!userId) {
-    console.error("[falPipeline] judgeAndDeliver: missing user_id", { modelId: model.id });
+    console.error("[falPipeline] judgeAndAwaitSelection: missing user_id", { modelId: model.id });
     return;
   }
   const modelId = model.id;
   const supabase = adminClient();
   const prev = asPromptJson(model.prompt_options);
   const po = parseModelPromptOptions(model.prompt_options);
-  const round = typeof prev.judge_round === "number" ? prev.judge_round : 0;
 
   const selfieUrls = (Array.isArray(prev.selfie_urls) ? prev.selfie_urls : [])
     .filter((s): s is string => typeof s === "string" && s.length > 0)
     .slice(0, 4);
 
-  let scores: JudgeScore[] | null = null;
-  let judgeError: string | null = null;
-  try {
-    const result = await runJudge({
-      outputUrls: finalUrls,
-      selfieUrls,
-      badgeUrl: po.badge_url,
-      brassUrl: po.brass_url,
-    });
-    scores = result.scores;
-    judgeError = result.error;
-  } catch (e) {
-    judgeError = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
-    console.error("[falPipeline] judge threw", { modelId, e });
-  }
+  const { scores, error: judgeError } = await runJudgeWithRetry({
+    outputUrls: finalUrls,
+    selfieUrls,
+    badgeUrl: po.badge_url,
+    brassUrl: po.brass_url,
+  });
 
-  if (!scores) {
+  if (scores) {
+    await logEvent(supabase, {
+      userId,
+      modelId,
+      stage: "judge",
+      eventType: "scores",
+      message: `Judge QC: scored ${finalUrls.length} candidates`,
+      payload: { threshold: JUDGE_THRESHOLD, scores } as unknown as Record<string, unknown>,
+    });
+  } else {
     await logEvent(supabase, {
       userId,
       modelId,
       stage: "judge",
       eventType: "judge_skipped",
-      message: `Judge unavailable — delivering without QC scores. Reason: ${judgeError ?? "unknown"}`,
-      payload: { round: round + 1, error: judgeError },
+      message: `Judge unavailable after retries — candidates unscored. Reason: ${judgeError ?? "unknown"}`,
+      payload: { error: judgeError },
     });
-    await deliverResults(model, finalUrls);
-    return;
   }
+
+  await supabase
+    .from("models")
+    .update({
+      status: "awaiting_selection",
+      prompt_options: {
+        ...prev,
+        ...(scores ? { judge_scores_final: scores } : {}),
+      } as unknown as Json,
+    })
+    .eq("id", modelId)
+    .eq("user_id", userId);
 
   await logEvent(supabase, {
     userId,
     modelId,
     stage: "judge",
-    eventType: "scores",
-    message: `Judge round ${round + 1}: scored ${finalUrls.length} outputs`,
-    payload: { round: round + 1, threshold: JUDGE_THRESHOLD, scores } as unknown as Record<string, unknown>,
+    eventType: "awaiting_selection",
+    message: `${finalUrls.length} candidates ready — awaiting selection of the final 4 in /admin/ops`,
+    payload: { count: finalUrls.length },
   });
-
-  const failing = failingIndices(scores);
-  if (failing.length === 0) {
-    await deliverResults(model, finalUrls);
-    return;
-  }
-
-  if (round >= 1) {
-    await supabase
-      .from("models")
-      .update({
-        status: "needs_review",
-        prompt_options: {
-          ...prev,
-          judge_scores_final: scores,
-        } as unknown as Json,
-      })
-      .eq("id", modelId)
-      .eq("user_id", userId);
-    await logEvent(supabase, {
-      userId,
-      modelId,
-      stage: "judge",
-      eventType: "needs_review",
-      message: `Judge: ${failing.length} image(s) still below ${JUDGE_THRESHOLD} after re-edit — order flagged for manual review`,
-      payload: { failing, scores } as unknown as Record<string, unknown>,
-    });
-    return;
-  }
-
-  await logEvent(supabase, {
-    userId,
-    modelId,
-    stage: "judge",
-    eventType: "re_edit",
-    message: `Judge: re-editing ${failing.length} image(s) below ${JUDGE_THRESHOLD} (indices ${failing.join(", ")})`,
-    payload: { failing, scores } as unknown as Record<string, unknown>,
-  });
-  await resubmitFinalEditForIndices(model, failing, scores);
 }
 
 /**
@@ -542,8 +617,7 @@ export async function judgeAndDeliver(model: PipelineModel, finalUrls: string[])
  */
 export async function resubmitFinalEditForIndices(
   model: PipelineModel,
-  indices: number[],
-  round1Scores?: JudgeScore[] | null
+  indices: number[]
 ): Promise<void> {
   const userId = model.user_id!;
   const modelId = model.id;
@@ -551,37 +625,90 @@ export async function resubmitFinalEditForIndices(
   const prev = asPromptJson(model.prompt_options);
   const po = parseModelPromptOptions(model.prompt_options);
 
-  const rawBase = prev.base_image_urls;
-  const portraitUrls = (Array.isArray(rawBase) ? rawBase : [])
-    .map((u) => (typeof u === "string" ? u.trim() : ""))
-    .filter(Boolean);
+  // Per-slot portrait mapping (candidate-pool orders); legacy orders fall
+  // back to base_image_urls by slot index.
+  const portraitBySlot = (Array.isArray(prev.edit_portrait_urls) ? prev.edit_portrait_urls : [])
+    .map((u) => (typeof u === "string" ? u.trim() : ""));
+  const legacyBase = (Array.isArray(prev.base_image_urls) ? prev.base_image_urls : [])
+    .map((u) => (typeof u === "string" ? u.trim() : ""));
+  const portraitFor = (slot: number): string =>
+    portraitBySlot[slot] || legacyBase[slot] || "";
 
-  const badgeUrl = po.badge_url?.trim();
-  const patchUrl = po.patch_url?.trim();
-  const brassUrl = po.brass_url?.trim();
-  const jacketUrl = po.jacket_url?.trim();
-  if (!badgeUrl || !patchUrl || !brassUrl || portraitUrls.length < PARALLEL) {
-    console.error("[falPipeline] resubmitFinalEditForIndices: missing inputs — delivering as-is", { modelId });
-    const existing = Array.isArray(prev.final_edit_results)
-      ? prev.final_edit_results.filter((u): u is string => typeof u === "string" && u.length > 0)
-      : [];
-    if (existing.length >= PARALLEL) await deliverResults(model, existing.slice(0, PARALLEL));
+  if (!po.badge_url?.trim() || !po.patch_url?.trim() || !po.brass_url?.trim()) {
+    console.error("[falPipeline] resubmitFinalEditForIndices: missing reference URLs", { modelId });
+    return;
+  }
+  const valid = indices.filter((i) => portraitFor(i));
+  if (valid.length === 0) {
+    console.error("[falPipeline] resubmitFinalEditForIndices: no portraits for requested slots", { modelId, indices });
     return;
   }
 
-  const prompt = buildGeminiEditPrompt({ hasJacket: Boolean(jacketUrl) });
-  const referenceUrls = [
-    badgeUrl,
-    patchUrl,
-    brassUrl,
-    ...(jacketUrl ? [jacketUrl] : []),
-  ];
-
-  // Clear failing slots BEFORE resubmitting so the merge RPC's filled_count
-  // drops below 4 and completion only fires after every re-edit lands.
+  // Clear targeted slots BEFORE resubmitting so the merge RPC's filled_count
+  // drops and completion only fires after every re-edit lands.
   const currentResults = Array.isArray(prev.final_edit_results)
     ? [...prev.final_edit_results]
-    : Array(PARALLEL).fill("");
+    : [];
+  for (const i of valid) currentResults[i] = "";
+
+  await supabase
+    .from("models")
+    .update({
+      prompt_options: {
+        ...prev,
+        final_edit_results: currentResults,
+      } as unknown as Json,
+      status: "processing_final_edit",
+    })
+    .eq("id", modelId)
+    .eq("user_id", userId);
+
+  const requestIds = await Promise.all(
+    valid.map((index) => submitEditForSlot(model, index, portraitFor(index)))
+  );
+
+  await logEvent(supabase, {
+    userId,
+    modelId,
+    stage: "final_edit",
+    eventType: "submit_success",
+    message: `Re-edit queued for ${valid.length} image(s)`,
+    payload: { modelId, stage: "final_edit", requestIds, indices: valid },
+  });
+}
+
+/**
+ * Re-run BASE GENERATION for specific edit slots (edits can't fix a bad
+ * face). Generates one fresh portrait per slot; the base_regen webhook
+ * swaps it into edit_portrait_urls and resubmits that slot's edit.
+ */
+export async function resubmitBaseGenForSlots(
+  model: PipelineModel,
+  indices: number[]
+): Promise<void> {
+  const userId = model.user_id!;
+  const modelId = model.id;
+  const supabase = adminClient();
+  const prev = asPromptJson(model.prompt_options);
+  const weightsUrl = loraWeightsUrl(model);
+  if (!weightsUrl) {
+    console.error("[falPipeline] resubmitBaseGenForSlots: no LoRA weights", { modelId });
+    return;
+  }
+
+  const triggerPhrase =
+    process.env.FAL_TRIGGER_PHRASE?.trim() || buildTriggerPhrase(userId, modelId);
+  const envTemplate = process.env.FAL_ASSISTANT_CHIEF_PROMPT_TEMPLATE?.trim();
+  const fluxPrompt = envTemplate
+    ? envTemplate.replace(/\[TRIGGER_PHRASE\]/g, triggerPhrase)
+    : `${triggerPhrase}, ${buildFluxBasePrompt({
+        department: typeof prev.department === "string" ? prev.department : null,
+        rank: typeof prev.rank === "string" ? prev.rank : null,
+      })}`;
+
+  const currentResults = Array.isArray(prev.final_edit_results)
+    ? [...prev.final_edit_results]
+    : [];
   for (const i of indices) currentResults[i] = "";
 
   await supabase
@@ -590,8 +717,6 @@ export async function resubmitFinalEditForIndices(
       prompt_options: {
         ...prev,
         final_edit_results: currentResults,
-        judge_round: 1,
-        ...(round1Scores ? { judge_scores_round1: round1Scores } : {}),
       } as unknown as Json,
       status: "processing_final_edit",
     })
@@ -599,14 +724,18 @@ export async function resubmitFinalEditForIndices(
     .eq("user_id", userId);
 
   const requestIds = await Promise.all(
-    indices.map((index) =>
+    indices.map((slot) =>
       submitFal(
-        env.geminiEditModel,
+        env.baseGenModel,
         {
-          prompt,
-          image_urls: [portraitUrls[index], ...referenceUrls],
+          prompt: fluxPrompt,
+          num_images: 1,
+          image_size: { width: 832, height: 1248 },
+          loras: [{ path: weightsUrl, scale: baseLoraScale }],
+          guidance_scale: baseGenGuidanceScale,
+          num_inference_steps: baseGenSteps,
         },
-        pipelineWebhookUrl(userId, modelId, "final_edit", index)
+        pipelineWebhookUrl(userId, modelId, "base_regen", slot)
       )
     )
   );
@@ -614,10 +743,10 @@ export async function resubmitFinalEditForIndices(
   await logEvent(supabase, {
     userId,
     modelId,
-    stage: "final_edit",
+    stage: "base_generation",
     eventType: "submit_success",
-    message: `Judge re-edit queued for ${indices.length} image(s)`,
-    payload: { modelId, stage: "final_edit", requestIds, indices },
+    message: `Base re-generation queued for slot(s) ${indices.join(", ")}`,
+    payload: { modelId, stage: "base_regen", requestIds, indices },
   });
 }
 
@@ -645,7 +774,11 @@ export async function sweepStuckJudges(minQuietSeconds = 180): Promise<number[]>
     if (!model.user_id) continue;
     const prev = asPromptJson(model.prompt_options);
     const slots = Array.isArray(prev.final_edit_results) ? prev.final_edit_results : [];
-    let urls = Array.from({ length: PARALLEL }, (_, i) => {
+    const expected =
+      typeof prev.edit_count === "number" && prev.edit_count >= PARALLEL
+        ? prev.edit_count
+        : Math.max(slots.length, PARALLEL);
+    let urls = Array.from({ length: expected }, (_, i) => {
       const x = slots[i];
       return typeof x === "string" && x.length > 0 ? x : "";
     });
@@ -671,8 +804,9 @@ export async function sweepStuckJudges(minQuietSeconds = 180): Promise<number[]>
         const { slots: rebuilt, found } = await rebuildSlotsFromComposites(supabase, {
           userId: model.user_id,
           modelId: model.id,
+          expected,
         });
-        if (found < PARALLEL) continue;
+        if (found < expected) continue;
         urls = rebuilt;
         await supabase
           .from("models")
@@ -701,11 +835,11 @@ export async function sweepStuckJudges(minQuietSeconds = 180): Promise<number[]>
       modelId: model.id,
       stage: "judge",
       eventType: "sweep_kick",
-      message: "Recovery sweep: 4/4 results present with no judge run — running judge now",
-      payload: { urls_present: 4 },
+      message: `Recovery sweep: ${expected}/${expected} results present with no judge run — running judge now`,
+      payload: { urls_present: expected },
     });
     const fresh = await loadModel(supabase, model.id, model.user_id);
-    await judgeAndDeliver(fresh ?? model, urls);
+    await judgeAndAwaitSelection(fresh ?? model, urls);
     kicked.push(model.id);
   }
   return kicked;

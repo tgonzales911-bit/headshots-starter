@@ -216,6 +216,194 @@ function sanitizeError(text: string): string {
   return text.replace(/key=[\w-]+/gi, "key=[redacted]").replace(/AIza[\w-]{10,}/g, "[redacted]");
 }
 
+const RETRY_DELAYS_MS = [3000, 10000];
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Retry wrapper for judge calls: transient Gemini failures (503s, network
+ * blips, empty responses) get up to two retries with backoff before the
+ * caller falls open. A missing API key is permanent — no retry.
+ */
+export async function runJudgeWithRetry(
+  args: Parameters<typeof runJudge>[0]
+): Promise<JudgeResult> {
+  let last: JudgeResult = { scores: null, error: "not attempted" };
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    try {
+      last = await runJudge(args);
+    } catch (e) {
+      last = {
+        scores: null,
+        error: sanitizeError(e instanceof Error ? `${e.name}: ${e.message}` : String(e)),
+      };
+    }
+    if (last.scores) return last;
+    if (last.error?.includes("GEMINI_API_KEY")) return last;
+    if (attempt < RETRY_DELAYS_MS.length) {
+      console.warn("[judgeNode] judge attempt failed, retrying", {
+        attempt: attempt + 1,
+        error: last.error,
+      });
+      await sleep(RETRY_DELAYS_MS[attempt]);
+    }
+  }
+  return last;
+}
+
+// ---------------------------------------------------------------------------
+// Candidate ranking — comparative identity selection over the base-gen pool.
+// ---------------------------------------------------------------------------
+
+export type CandidateRanking = {
+  /** Candidate indices ordered best identity match first (discards excluded). */
+  ranking: number[];
+  discarded: Array<{ index: number; reason: string }>;
+};
+
+export type RankResult = {
+  result: CandidateRanking | null;
+  error: string | null;
+};
+
+function rankInstructions(candidateCount: number, selfieCount: number): string {
+  return [
+    `You are selecting the best base portraits for BadgeShot, a Class A fire service portrait service.`,
+    `You will see ${candidateCount} CANDIDATE portrait images of the same generation run, then ${selfieCount} SELFIE reference images of the real customer (ground truth).`,
+    `Step 1 — DISCARD any candidate with corruption or artifacts: warped or merged facial features, extra/missing limbs or fingers, garbled uniform geometry, duplicated collar, melted ears, or any obviously broken rendering.`,
+    `Step 2 — RANK the remaining candidates by IDENTITY match to the selfies, best first. This is COMPARATIVE: judge which candidates look most like the real person relative to each other. Prioritize face shape and proportions (width, jaw, cheekbones), nose and eye structure, and realistic skin texture matching the selfies. Penalize averaged/idealized faces and plastic AI skin.`,
+    `Respond with ONLY JSON shaped:`,
+    `{"discarded":[{"index":2,"reason":"..."}],"ranking":[5,0,7,1,3,6]}`,
+    `The ranking array must contain every candidate index 0..${candidateCount - 1} that you did NOT discard, exactly once, best first.`,
+  ].join("\n");
+}
+
+function parseRanking(text: string, candidateCount: number): CandidateRanking | null {
+  let jsonText = text.trim();
+  const fence = jsonText.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence) jsonText = fence[1].trim();
+  const start = jsonText.indexOf("{");
+  const end = jsonText.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonText.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+  const o = parsed as Record<string, unknown>;
+
+  const discarded: Array<{ index: number; reason: string }> = [];
+  if (Array.isArray(o.discarded)) {
+    for (const d of o.discarded) {
+      if (d && typeof d === "object") {
+        const idx = Number((d as Record<string, unknown>).index);
+        if (Number.isInteger(idx) && idx >= 0 && idx < candidateCount) {
+          const reason = String((d as Record<string, unknown>).reason ?? "").slice(0, 200);
+          discarded.push({ index: idx, reason });
+        }
+      }
+    }
+  }
+  const discardedSet = new Set(discarded.map((d) => d.index));
+
+  if (!Array.isArray(o.ranking)) return null;
+  const seen = new Set<number>();
+  const ranking: number[] = [];
+  for (const r of o.ranking) {
+    const idx = Number(r);
+    if (!Number.isInteger(idx) || idx < 0 || idx >= candidateCount) return null;
+    if (seen.has(idx) || discardedSet.has(idx)) continue;
+    seen.add(idx);
+    ranking.push(idx);
+  }
+  if (ranking.length === 0) return null;
+  return { ranking, discarded };
+}
+
+export async function rankCandidates(args: {
+  candidateUrls: string[];
+  selfieUrls: string[];
+}): Promise<RankResult> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return { result: null, error: "GEMINI_API_KEY is not set in this deployment's environment" };
+  }
+  const model = process.env.GEMINI_JUDGE_MODEL?.trim() || "gemini-3-flash";
+
+  const parts: GeminiPart[] = [
+    { text: rankInstructions(args.candidateUrls.length, args.selfieUrls.length) },
+  ];
+  for (let i = 0; i < args.candidateUrls.length; i++) {
+    const part = await fetchImagePart(args.candidateUrls[i]);
+    if (!part) return { result: null, error: `Could not fetch candidate image ${i}` };
+    parts.push({ text: `CANDIDATE ${i}:` }, part);
+  }
+  for (let i = 0; i < args.selfieUrls.length; i++) {
+    const part = await fetchImagePart(args.selfieUrls[i]);
+    if (part) parts.push({ text: `SELFIE ${i}:` }, part);
+  }
+
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts }],
+        generationConfig: { temperature: 0, response_mime_type: "application/json" },
+      }),
+    }
+  );
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    return {
+      result: null,
+      error: `Gemini API HTTP ${res.status}: ${sanitizeError(errText).slice(0, 300)}`,
+    };
+  }
+  const body = (await res.json()) as {
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }>;
+  };
+  const text = (body.candidates?.[0]?.content?.parts ?? [])
+    .filter((p) => p.thought !== true)
+    .map((p) => p.text ?? "")
+    .join("");
+  if (!text.trim()) return { result: null, error: "Gemini returned an empty ranking response" };
+  const result = parseRanking(text, args.candidateUrls.length);
+  if (!result) return { result: null, error: "Could not parse ranking response" };
+  return { result, error: null };
+}
+
+export async function rankCandidatesWithRetry(
+  args: Parameters<typeof rankCandidates>[0]
+): Promise<RankResult> {
+  let last: RankResult = { result: null, error: "not attempted" };
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    try {
+      last = await rankCandidates(args);
+    } catch (e) {
+      last = {
+        result: null,
+        error: sanitizeError(e instanceof Error ? `${e.name}: ${e.message}` : String(e)),
+      };
+    }
+    if (last.result) return last;
+    if (last.error?.includes("GEMINI_API_KEY")) return last;
+    if (attempt < RETRY_DELAYS_MS.length) {
+      console.warn("[judgeNode] ranking attempt failed, retrying", {
+        attempt: attempt + 1,
+        error: last.error,
+      });
+      await sleep(RETRY_DELAYS_MS[attempt]);
+    }
+  }
+  return last;
+}
+
 /**
  * Minimal connectivity check for the admin diagnostic: verifies the key is
  * present in this deployment and that a tiny text-only Gemini call succeeds.

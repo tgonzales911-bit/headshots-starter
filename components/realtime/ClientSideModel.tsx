@@ -114,7 +114,7 @@ export default function ClientSideModel({
   // needs_review orders have finished images in prompt_options.final_edit_results
   // but no headshots rows yet (delivery is held for a quality check).
   const pendingReviewUrls = useMemo(() => {
-    if (model.status !== "needs_review") return [];
+    if (model.status !== "needs_review" && model.status !== "awaiting_selection") return [];
     const po =
       model.prompt_options &&
       typeof model.prompt_options === "object" &&
@@ -145,7 +145,8 @@ export default function ClientSideModel({
             </div>
           )}
           <div className="flex flex-col w-full lg:w-1/2 rounded-md">
-            {model.status === "needs_review" && pendingReviewUrls.length > 0 && (
+            {(model.status === "needs_review" || model.status === "awaiting_selection") &&
+              pendingReviewUrls.length > 0 && (
               <div className="flex flex-1 flex-col gap-2">
                 <div className="flex items-center gap-2">
                   <h1 className="text-xl">Results</h1>
