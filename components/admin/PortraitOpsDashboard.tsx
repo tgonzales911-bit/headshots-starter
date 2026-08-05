@@ -919,14 +919,14 @@ export default function PortraitOpsDashboard({
               <div>
                 <h2 className="text-lg font-semibold text-amber-300">
                   {selected.status === "awaiting_selection"
-                    ? "Choose the final four"
+                    ? "Choose 4 portraits to deliver"
                     : "Needs review — judge flagged this order"}
                 </h2>
                 <p className="text-xs text-zinc-500">
                   {selected.promptOptions.name ?? selected.userEmail} ·{" "}
                   {selected.promptOptions.department ?? "—"}
                   {selected.status === "awaiting_selection"
-                    ? " · check exactly 4 images, then Deliver"
+                    ? " · exactly 4 picks required — the action bar below stays visible while you scroll"
                     : ` · judge round ${selected.promptOptions.judge_round ?? 0}`}
                 </p>
               </div>
@@ -1047,7 +1047,18 @@ export default function PortraitOpsDashboard({
                         ? " Check exactly 4 images to deliver — or check weak ones and re-run their edit or base generation."
                         : " R1 = first judge pass, R2 = after re-edit."}
                     </p>
-                    <div className="flex flex-wrap items-center gap-3">
+                    <div className="sticky bottom-0 z-10 -mx-6 -mb-6 flex flex-wrap items-center gap-3 border-t border-white/15 bg-[#0c0f14]/95 px-6 py-3 backdrop-blur">
+                      {isSelection && (
+                        <span
+                          className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
+                            reviewSelection.size === 4
+                              ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/40"
+                              : "bg-white/5 text-zinc-300 ring-1 ring-white/15"
+                          }`}
+                        >
+                          {reviewSelection.size} of 4 picked
+                        </span>
+                      )}
                       {isSelection ? (
                         <button
                           type="button"

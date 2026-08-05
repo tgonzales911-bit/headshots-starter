@@ -167,6 +167,23 @@ export async function POST(request: Request) {
           { status: 400 }
         );
       }
+      // Persist the picked composites as the order's final set; the full
+      // candidate list remains recoverable via base_candidate_results and
+      // the stored composite files.
+      const { error: selErr } = await admin
+        .from("models")
+        .update({
+          prompt_options: {
+            ...prev,
+            final_edit_results: picks,
+            edit_count: PARALLEL,
+            selection_indices: unique,
+          } as Json,
+        })
+        .eq("id", modelId);
+      if (selErr) {
+        return NextResponse.json({ error: selErr.message }, { status: 500 });
+      }
       await logReviewEvent(admin, {
         userId: model.user_id,
         modelId,
@@ -174,7 +191,12 @@ export async function POST(request: Request) {
         message: `Operator selected images ${unique.map((i) => i + 1).join(", ")} for delivery`,
         payload: { indices: unique },
       });
-      await deliverResults(model, picks);
+      const { data: freshModel } = await admin
+        .from("models")
+        .select("*")
+        .eq("id", modelId)
+        .single();
+      await deliverResults(freshModel ?? model, picks);
       return NextResponse.json({ success: true, delivered: true, indices: unique });
     }
 
