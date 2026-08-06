@@ -250,7 +250,7 @@ export async function POST(request: Request) {
       const indicesRaw = Array.isArray(body?.indices) ? body!.indices : [];
       const indices = indicesRaw
         .map((n) => Number(n))
-        .filter((n) => Number.isInteger(n) && n >= 0 && n < PARALLEL);
+        .filter((n) => Number.isInteger(n) && n >= 0 && n < editExpected);
       if (indices.length === 0) {
         return NextResponse.json({ error: "indices required for rerun" }, { status: 400 });
       }

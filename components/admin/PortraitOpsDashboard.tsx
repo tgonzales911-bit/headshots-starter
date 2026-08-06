@@ -734,7 +734,17 @@ export default function PortraitOpsDashboard({
                         ? "Judge run complete — refresh shows the outcome."
                         : "Escalated to the manual workflow.";
           setReviewMsg({ ok: true, text });
-          setReviewSelection(new Set());
+          if (action === "rerun" || action === "rerun_base") {
+            // Re-run images are being replaced — drop them from the delivery
+            // picks but keep the operator's other selections intact.
+            setReviewSelection((prevSel) => {
+              const next = new Set(prevSel);
+              for (const i of indices ?? []) next.delete(i);
+              return next;
+            });
+          } else {
+            setReviewSelection(new Set());
+          }
           await refreshOrders();
         }
       } catch (e) {
@@ -984,7 +994,7 @@ export default function PortraitOpsDashboard({
                                   onChange={() => toggleReviewSelection(i)}
                                   className="accent-[#c9a84c]"
                                 />
-                                {isSelection ? "pick" : "re-run"}
+                                {isSelection ? "deliver" : "re-run"}
                               </label>
                             </div>
                             {url ? (
@@ -1037,6 +1047,28 @@ export default function PortraitOpsDashboard({
                                 </p>
                               )}
                             </div>
+                            {isSelection && (
+                              <div className="mt-2 flex gap-2 border-t border-white/10 pt-2">
+                                <button
+                                  type="button"
+                                  disabled={reviewBusy !== null}
+                                  onClick={() => void reviewAction("rerun", [i])}
+                                  title="Re-run the Gemini edit for this image only"
+                                  className="flex-1 rounded border border-[#4a82c9]/40 bg-[#4a82c9]/10 px-2 py-1.5 text-[10px] font-semibold text-[#7eb4ff] hover:bg-[#4a82c9]/20 disabled:opacity-40"
+                                >
+                                  ↻ edit
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={reviewBusy !== null}
+                                  onClick={() => void reviewAction("rerun_base", [i])}
+                                  title="Generate a fresh base portrait for this image (edits can't fix a bad face)"
+                                  className="flex-1 rounded border border-purple-500/40 bg-purple-500/10 px-2 py-1.5 text-[10px] font-semibold text-purple-300 hover:bg-purple-500/20 disabled:opacity-40"
+                                >
+                                  ↻ base gen
+                                </button>
+                              </div>
+                            )}
                           </div>
                         );
                       })}
@@ -1044,7 +1076,7 @@ export default function PortraitOpsDashboard({
                     <p className="text-[11px] text-zinc-500">
                       Hover any score chip for the judge&apos;s reason.
                       {isSelection
-                        ? " Check exactly 4 images to deliver — or check weak ones and re-run their edit or base generation."
+                        ? " The checkbox means one thing: deliver this image. To fix a weak image instead, use its own ↻ edit / ↻ base gen buttons — they never touch your delivery picks."
                         : " R1 = first judge pass, R2 = after re-edit."}
                     </p>
                     <div className="sticky bottom-0 z-10 -mx-6 -mb-6 flex flex-wrap items-center gap-3 border-t border-white/15 bg-[#0c0f14]/95 px-6 py-3 backdrop-blur">
@@ -1082,30 +1114,34 @@ export default function PortraitOpsDashboard({
                           {reviewBusy === "approve" ? "Delivering…" : "Approve & Deliver"}
                         </button>
                       )}
-                      <button
-                        type="button"
-                        disabled={reviewBusy !== null || reviewSelection.size === 0}
-                        onClick={() =>
-                          void reviewAction("rerun", Array.from(reviewSelection).sort())
-                        }
-                        className="rounded-lg border border-[#4a82c9]/50 bg-[#4a82c9]/15 px-5 py-2.5 text-xs font-semibold text-[#7eb4ff] hover:bg-[#4a82c9]/25 disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        {reviewBusy === "rerun"
-                          ? "Queueing…"
-                          : `Re-run edits (${reviewSelection.size})`}
-                      </button>
-                      <button
-                        type="button"
-                        disabled={reviewBusy !== null || reviewSelection.size === 0}
-                        onClick={() =>
-                          void reviewAction("rerun_base", Array.from(reviewSelection).sort())
-                        }
-                        className="rounded-lg border border-purple-500/50 bg-purple-500/15 px-5 py-2.5 text-xs font-semibold text-purple-300 hover:bg-purple-500/25 disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        {reviewBusy === "rerun_base"
-                          ? "Queueing…"
-                          : `Re-run base gen (${reviewSelection.size})`}
-                      </button>
+                      {!isSelection && (
+                        <>
+                          <button
+                            type="button"
+                            disabled={reviewBusy !== null || reviewSelection.size === 0}
+                            onClick={() =>
+                              void reviewAction("rerun", Array.from(reviewSelection).sort())
+                            }
+                            className="rounded-lg border border-[#4a82c9]/50 bg-[#4a82c9]/15 px-5 py-2.5 text-xs font-semibold text-[#7eb4ff] hover:bg-[#4a82c9]/25 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            {reviewBusy === "rerun"
+                              ? "Queueing…"
+                              : `Re-run edits (${reviewSelection.size})`}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={reviewBusy !== null || reviewSelection.size === 0}
+                            onClick={() =>
+                              void reviewAction("rerun_base", Array.from(reviewSelection).sort())
+                            }
+                            className="rounded-lg border border-purple-500/50 bg-purple-500/15 px-5 py-2.5 text-xs font-semibold text-purple-300 hover:bg-purple-500/25 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            {reviewBusy === "rerun_base"
+                              ? "Queueing…"
+                              : `Re-run base gen (${reviewSelection.size})`}
+                          </button>
+                        </>
+                      )}
                       <button
                         type="button"
                         disabled={reviewBusy !== null}
