@@ -759,6 +759,19 @@ export default function PortraitOpsDashboard({
     [selected, refreshOrders]
   );
 
+  // Auto-refresh while the selected order has work in flight so re-run
+  // results appear without a manual Refresh (the silent-stale-panel bug).
+  useEffect(() => {
+    const s = selected?.status;
+    if (s !== "processing_final_edit" && s !== "generating" && s !== "training") {
+      return;
+    }
+    const t = setInterval(() => {
+      void refreshOrders();
+    }, 10000);
+    return () => clearInterval(t);
+  }, [selected?.status, refreshOrders]);
+
   const toggleReviewSelection = (idx: number) => {
     setReviewSelection((prev) => {
       const next = new Set(prev);
@@ -924,25 +937,32 @@ export default function PortraitOpsDashboard({
               <p className="text-sm">Select an order to view its workflow.</p>
             </div>
           ) : selected.status === "needs_review" ||
-            selected.status === "awaiting_selection" ? (
+            selected.status === "awaiting_selection" ||
+            (selected.status === "processing_final_edit" &&
+              (selected.promptOptions.final_edit_results?.length ?? 0) > 0) ? (
             <div className="mx-auto max-w-6xl space-y-5">
               <div>
                 <h2 className="text-lg font-semibold text-amber-300">
                   {selected.status === "awaiting_selection"
                     ? "Choose 4 portraits to deliver"
-                    : "Needs review — judge flagged this order"}
+                    : selected.status === "processing_final_edit"
+                      ? "Edits in progress"
+                      : "Needs review — judge flagged this order"}
                 </h2>
                 <p className="text-xs text-zinc-500">
                   {selected.promptOptions.name ?? selected.userEmail} ·{" "}
                   {selected.promptOptions.department ?? "—"}
                   {selected.status === "awaiting_selection"
                     ? " · exactly 4 picks required — the action bar below stays visible while you scroll"
-                    : ` · judge round ${selected.promptOptions.judge_round ?? 0}`}
+                    : selected.status === "processing_final_edit"
+                      ? " · this panel auto-refreshes every 10s until results land"
+                      : ` · judge round ${selected.promptOptions.judge_round ?? 0}`}
                 </p>
               </div>
 
               {(() => {
                 const isSelection = selected.status === "awaiting_selection";
+                const isProcessing = selected.status === "processing_final_edit";
                 const rawSlots = selected.promptOptions.final_edit_results ?? [];
                 const slotCount = Math.max(rawSlots.length, 4);
                 const slots = Array.from({ length: slotCount }, (_, i) => rawSlots[i] ?? "");
@@ -953,7 +973,16 @@ export default function PortraitOpsDashboard({
                   list.find((s) => s.index === i);
                 return (
                   <>
-                    {incomplete && (
+                    {isProcessing && (
+                      <div className="flex items-center gap-3 rounded-lg border border-[#4a82c9]/40 bg-[#4a82c9]/10 px-4 py-3 text-xs text-[#7eb4ff]">
+                        <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-[#7eb4ff]" />
+                        {slots.filter(Boolean).length}/{slotCount} results in —
+                        re-run edits take about a minute each. This panel
+                        refreshes automatically; empty slots fill in as fal
+                        returns them.
+                      </div>
+                    )}
+                    {incomplete && !isProcessing && (
                       <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-xs text-red-200">
                         This order&apos;s result set is incomplete (
                         {slots.filter(Boolean).length}/{slotCount}). Partial
@@ -1047,20 +1076,20 @@ export default function PortraitOpsDashboard({
                                 </p>
                               )}
                             </div>
-                            {isSelection && (
+                            {(isSelection || isProcessing) && (
                               <div className="mt-2 flex gap-2 border-t border-white/10 pt-2">
                                 <button
                                   type="button"
-                                  disabled={reviewBusy !== null}
+                                  disabled={reviewBusy !== null || isProcessing}
                                   onClick={() => void reviewAction("rerun", [i])}
                                   title="Re-run the Gemini edit for this image only"
                                   className="flex-1 rounded border border-[#4a82c9]/40 bg-[#4a82c9]/10 px-2 py-1.5 text-[10px] font-semibold text-[#7eb4ff] hover:bg-[#4a82c9]/20 disabled:opacity-40"
                                 >
-                                  ↻ edit
+                                  {isProcessing && !url ? "working…" : "↻ edit"}
                                 </button>
                                 <button
                                   type="button"
-                                  disabled={reviewBusy !== null}
+                                  disabled={reviewBusy !== null || isProcessing}
                                   onClick={() => void reviewAction("rerun_base", [i])}
                                   title="Generate a fresh base portrait for this image (edits can't fix a bad face)"
                                   className="flex-1 rounded border border-purple-500/40 bg-purple-500/10 px-2 py-1.5 text-[10px] font-semibold text-purple-300 hover:bg-purple-500/20 disabled:opacity-40"
@@ -1091,7 +1120,11 @@ export default function PortraitOpsDashboard({
                           {reviewSelection.size} of 4 picked
                         </span>
                       )}
-                      {isSelection ? (
+                      {isProcessing ? (
+                        <span className="text-xs text-zinc-400">
+                          Actions unlock when the in-flight edits finish.
+                        </span>
+                      ) : isSelection ? (
                         <button
                           type="button"
                           disabled={reviewBusy !== null || reviewSelection.size !== 4}
@@ -1114,7 +1147,7 @@ export default function PortraitOpsDashboard({
                           {reviewBusy === "approve" ? "Delivering…" : "Approve & Deliver"}
                         </button>
                       )}
-                      {!isSelection && (
+                      {!isSelection && !isProcessing && (
                         <>
                           <button
                             type="button"
@@ -1150,7 +1183,7 @@ export default function PortraitOpsDashboard({
                       >
                         {reviewBusy === "escalate" ? "Escalating…" : "Escalate to Manual"}
                       </button>
-                      {incomplete && (
+                      {incomplete && !isProcessing && (
                         <button
                           type="button"
                           disabled={reviewBusy !== null}
