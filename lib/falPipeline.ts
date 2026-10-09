@@ -13,7 +13,12 @@ import { alertOperator, sendOrderProblem } from "@/lib/notify";
 import { SUPPORT_EMAIL } from "@/lib/site";
 import { rebuildSlotsFromComposites } from "@/lib/repairComposites";
 import { parseModelPromptOptions } from "@/lib/modelPromptOptions";
-import { buildFluxBasePrompt, buildGeminiEditPrompt, buildIdentityEditPrompt } from "@/lib/promptMapping";
+import {
+  buildFluxBasePrompt,
+  buildGeminiEditPrompt,
+  buildIdentityEditPrompt,
+  buildRedressPrompt,
+} from "@/lib/promptMapping";
 import { buildIdentityProfile, IdentityProfile, parseIdentityProfile } from "@/lib/identityPrep";
 import { Database, Json } from "@/types/supabase";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
@@ -94,6 +99,24 @@ function basePromptLead(trigger: string, identity: IdentityProfile | null): stri
   return identity ? `photo of ${trigger} ${identity.noun}` : trigger;
 }
 
+/**
+ * How portraits are made.
+ *  - "photo" (default): each portrait starts from one of the customer's real
+ *    photos; the edit model re-dresses it. No face model is trained.
+ *  - "lora": train a face model, generate portraits from it, then correct.
+ * Set PIPELINE_MODE=lora to go back.
+ */
+export function pipelineMode(): "photo" | "lora" {
+  return process.env.PIPELINE_MODE?.trim().toLowerCase() === "lora" ? "lora" : "photo";
+}
+
+function isPhotoOrder(prev: Record<string, unknown>): boolean {
+  return prev.pipeline_mode === "photo";
+}
+
+/** Face score at or below which the judge is saying "this is someone else". */
+const AUTO_RETRY_FACE_SCORE = 5;
+
 function identityRefUrls(identity: IdentityProfile | null): string[] {
   return identity ? identity.reference_urls.slice(0, editIdentityRefs) : [];
 }
@@ -171,7 +194,13 @@ function firstImageUrl(payload: Record<string, unknown> | undefined): string | n
   return toUrls(payload.images)[0] ?? toUrls(payload.image)[0] ?? null;
 }
 
-function pipelineWebhookUrl(userId: string, modelId: number, stage: FalPipelineWebhookStage, index?: number): string {
+function pipelineWebhookUrl(
+  userId: string,
+  modelId: number,
+  stage: FalPipelineWebhookStage,
+  index?: number,
+  attempt?: number
+): string {
   const url = new URL(`${baseUrl()}/api/fal/pipeline-webhook`);
   url.searchParams.set("user_id", userId);
   url.searchParams.set("model_id", String(modelId));
@@ -179,6 +208,9 @@ function pipelineWebhookUrl(userId: string, modelId: number, stage: FalPipelineW
   url.searchParams.set("webhook_secret", required("webhookSecret"));
   if (typeof index === "number") {
     url.searchParams.set("index", String(index));
+  }
+  if (typeof attempt === "number" && attempt > 0) {
+    url.searchParams.set("try", String(attempt));
   }
   return url.toString();
 }
@@ -679,11 +711,21 @@ export async function submitEditForSlot(
   model: PipelineModel,
   slot: number,
   portraitUrl: string,
-  identityOverride?: IdentityProfile | null
+  identityOverride?: IdentityProfile | null,
+  attempt = 0
 ): Promise<string> {
   const userId = model.user_id!;
-  const identity =
-    identityOverride ?? parseIdentityProfile(asPromptJson(model.prompt_options).identity);
+  const prevPo = asPromptJson(model.prompt_options);
+  if (isPhotoOrder(prevPo)) {
+    // Photo-first: the slot's "portrait" is a real photo. Re-dress it; the
+    // identity_edit webhook then adds the insignia to the result.
+    return submitFal(
+      env.geminiEditModel,
+      editInput(buildRedressPrompt(), [portraitUrl]),
+      pipelineWebhookUrl(userId, model.id, "identity_edit", slot, attempt)
+    );
+  }
+  const identity = identityOverride ?? parseIdentityProfile(prevPo.identity);
   const faceRefs = identityRefUrls(identity);
   if (faceRefs.length === 0) {
     return submitInsigniaEditForSlot(model, slot, portraitUrl);
@@ -691,8 +733,55 @@ export async function submitEditForSlot(
   return submitFal(
     env.geminiEditModel,
     editInput(buildIdentityEditPrompt(faceRefs.length), [portraitUrl, ...faceRefs]),
-    pipelineWebhookUrl(userId, model.id, "identity_edit", slot)
+    pipelineWebhookUrl(userId, model.id, "identity_edit", slot, attempt)
   );
+}
+
+/**
+ * Photo-first start: no training. Every slot gets one of the customer's best
+ * real photos (cycling through them, so the set has some variety), which is
+ * re-dressed and then given its insignia.
+ */
+export async function startPipelineFromPhotos(model: PipelineModel): Promise<void> {
+  const userId = model.user_id;
+  if (!userId) return;
+  const modelId = model.id;
+  const supabase = adminClient();
+  const prev = asPromptJson(model.prompt_options);
+  const identity = await ensureIdentity(model, prev);
+  const sources = identity?.reference_urls ?? [];
+  if (sources.length === 0) {
+    await failModel(supabase, modelId, userId, "No usable photo of the customer's face was found.");
+    return;
+  }
+  const count = editCandidates;
+  const portraits = Array.from({ length: count }, (_, i) => sources[i % sources.length]);
+  const nextPo = {
+    ...prev,
+    pipeline_mode: "photo",
+    edit_portrait_urls: portraits,
+    base_candidate_results: portraits,
+    final_edit_results: Array(count).fill(""),
+    edit_count: count,
+    num_candidates: count,
+  };
+  await supabase
+    .from("models")
+    .update({ prompt_options: nextPo as unknown as Json, status: "processing_final_edit" })
+    .eq("id", modelId)
+    .eq("user_id", userId);
+  const working = { ...model, prompt_options: nextPo as unknown as Json } as PipelineModel;
+  const requestIds = await Promise.all(
+    portraits.map((url, slot) => submitEditForSlot(working, slot, url))
+  );
+  await logEvent(supabase, {
+    userId,
+    modelId,
+    stage: "base_generation",
+    eventType: "submit_success",
+    message: `Photo-first: ${count} portraits started from ${sources.length} of the customer's real photos (no training)`,
+    payload: { modelId, requestIds, sources },
+  });
 }
 
 /** Insignia pass for one slot: badge, patch, brass (and jacket) onto the portrait; the face is left as it is. */
@@ -756,6 +845,34 @@ export async function judgeAndAwaitSelection(model: PipelineModel, finalUrls: st
       message: `Judge unavailable after retries — candidates unscored. Reason: ${judgeError ?? "unknown"}`,
       payload: { error: judgeError },
     });
+  }
+
+  // A portrait the judge says is the wrong person is redone automatically
+  // (twice at most per order) before a person is asked to look.
+  const wrongPerson = scores
+    ? scores.filter((s) => s.face_match.score <= AUTO_RETRY_FACE_SCORE).map((s) => s.index)
+    : [];
+  const retriesSoFar = Number(prev.auto_face_retries) || 0;
+  if (wrongPerson.length > 0 && retriesSoFar < 2) {
+    const nextPo = { ...prev, judge_scores_final: scores, auto_face_retries: retriesSoFar + 1 };
+    await supabase
+      .from("models")
+      .update({ prompt_options: nextPo as unknown as Json })
+      .eq("id", modelId)
+      .eq("user_id", userId);
+    await logEvent(supabase, {
+      userId,
+      modelId,
+      stage: "judge",
+      eventType: "auto_retry",
+      message: `Image(s) ${wrongPerson.map((i) => i + 1).join(", ")} did not look like the customer — redoing automatically (round ${retriesSoFar + 1} of 2)`,
+      payload: { indices: wrongPerson, round: retriesSoFar + 1 },
+    });
+    await resubmitFinalEditForIndices(
+      { ...model, prompt_options: nextPo as unknown as Json } as PipelineModel,
+      wrongPerson
+    );
+    return;
   }
 
   await supabase
@@ -884,6 +1001,43 @@ export async function resubmitBaseGenForSlots(
   const modelId = model.id;
   const supabase = adminClient();
   const prev = asPromptJson(model.prompt_options);
+
+  if (isPhotoOrder(prev)) {
+    // Photo-first orders have no generated base: "a fresh base" means start
+    // this image from a different one of the customer's real photos.
+    const identity = await ensureIdentity(model, prev);
+    const sources = identity?.reference_urls ?? [];
+    if (sources.length === 0) return;
+    const portraits = (Array.isArray(prev.edit_portrait_urls) ? [...prev.edit_portrait_urls] : []).map(
+      (u) => (typeof u === "string" ? u : "")
+    );
+    const results = Array.isArray(prev.final_edit_results) ? [...prev.final_edit_results] : [];
+    for (const i of indices) {
+      const at = sources.indexOf(portraits[i]);
+      portraits[i] = sources[(at + 1) % sources.length];
+      results[i] = "";
+    }
+    const nextPo = { ...prev, edit_portrait_urls: portraits, final_edit_results: results };
+    await supabase
+      .from("models")
+      .update({ prompt_options: nextPo as unknown as Json, status: "processing_final_edit" })
+      .eq("id", modelId)
+      .eq("user_id", userId);
+    const working = { ...model, prompt_options: nextPo as unknown as Json } as PipelineModel;
+    const requestIds = await Promise.all(
+      indices.map((i) => submitEditForSlot(working, i, portraits[i]))
+    );
+    await logEvent(supabase, {
+      userId,
+      modelId,
+      stage: "base_generation",
+      eventType: "submit_success",
+      message: `Restarted image(s) ${indices.map((i) => i + 1).join(", ")} from a different real photo`,
+      payload: { stage: "base_regen", indices, modelId, requestIds },
+    });
+    return;
+  }
+
   const weightsUrl = loraWeightsUrl(model);
   if (!weightsUrl) {
     console.error("[falPipeline] resubmitBaseGenForSlots: no LoRA weights", { modelId });

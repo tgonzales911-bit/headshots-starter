@@ -1,5 +1,10 @@
 import { buildTrainingZipFromImageUrls } from "@/lib/buildTrainingZip";
-import { buildTriggerPhrase, kickoffPortraitTraining } from "@/lib/falPipeline";
+import {
+  buildTriggerPhrase,
+  kickoffPortraitTraining,
+  pipelineMode,
+  startPipelineFromPhotos,
+} from "@/lib/falPipeline";
 import { buildIdentityProfile, IdentityProfile } from "@/lib/identityPrep";
 import { alertOperator, sendOrderConfirmation } from "@/lib/notify";
 import { SELFIE_MIN } from "@/lib/site";
@@ -138,6 +143,40 @@ export async function startOrder(args: {
       identity = await buildIdentityProfile({ selfieUrls: images, userId, modelId });
     } catch (e) {
       console.error("[startOrder] identity analysis failed (continuing without it)", e);
+    }
+
+    if (pipelineMode() === "photo") {
+      // Photo-first: no training. Portraits start from the customer's real
+      // photos, so the order is ready for review in minutes.
+      const { data: userData } = await admin.auth.admin.getUserById(userId);
+      const email = userData.user?.email ?? null;
+      const nextPo = {
+        ...po,
+        ...(identity ? { identity } : {}),
+        pipeline_mode: "photo",
+        order_source: args.source,
+        payment_reference: args.paymentReference ?? null,
+        started_at: new Date().toISOString(),
+      };
+      await admin
+        .from("models")
+        .update({ user_email: email, prompt_options: nextPo as Json })
+        .eq("id", modelId)
+        .eq("user_id", userId);
+      const { data: fresh } = await admin.from("models").select("*").eq("id", modelId).single();
+      if (!fresh) return fail("Order could not be reloaded");
+      await startPipelineFromPhotos(fresh);
+
+      const { error: samplesError } = await admin
+        .from("samples")
+        .insert(images.map((uri: string) => ({ modelId, uri })));
+      if (samplesError) {
+        console.error("[startOrder] samples insert failed (non-fatal)", samplesError);
+      }
+      if (email) {
+        await sendOrderConfirmation({ to: email, customerName, modelId });
+      }
+      return { ok: true, modelId, alreadyStarted: false };
     }
 
     const zipBuffer = await buildTrainingZipFromImageUrls(images, {

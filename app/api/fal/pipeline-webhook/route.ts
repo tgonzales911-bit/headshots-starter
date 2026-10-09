@@ -237,6 +237,35 @@ export async function POST(request: Request) {
           : {};
       const originals = Array.isArray(poNow.edit_portrait_urls) ? poNow.edit_portrait_urls : [];
       const original = typeof originals[index] === "string" ? (originals[index] as string) : "";
+      const photoFirst = poNow.pipeline_mode === "photo";
+      const attempt = Number(url.searchParams.get("try") ?? "0") || 0;
+      if (!corrected && photoFirst) {
+        // The slot's original is the customer's everyday photo, so there is
+        // nothing to fall back to: try the re-dress once more, then stop and
+        // tell the operator.
+        await insertPipelineEvent(supabase, {
+          userId,
+          modelId,
+          stage: "identity",
+          eventType: "redress_failed",
+          message: `Portrait for image ${index + 1} was not produced (attempt ${attempt + 1})`,
+          requestId: body.request_id ?? null,
+          payload: { index, attempt, error: typeof body.error === "string" ? body.error : null },
+        });
+        if (attempt < 1 && original) {
+          await submitEditForSlot(forInsignia, index, original, null, attempt + 1);
+        } else {
+          await alertOperator({
+            subject: `Order #${modelId}: one portrait could not be made`,
+            lines: [
+              `Image slot: ${index + 1}`,
+              "The order is still open. Re-run this image from the operator dashboard.",
+            ],
+            modelId,
+          });
+        }
+        return NextResponse.json({ ok: true }, { status: 200 });
+      }
       const portrait = corrected || original;
       await insertPipelineEvent(supabase, {
         userId,
@@ -244,7 +273,9 @@ export async function POST(request: Request) {
         stage: "identity",
         eventType: corrected ? "face_corrected" : "face_correction_failed",
         message: corrected
-          ? `Face corrected from the customer's photos for image ${index + 1} — adding insignia`
+          ? photoFirst
+            ? `Real photo re-dressed in Class A for image ${index + 1} — adding insignia`
+            : `Face corrected from the customer's photos for image ${index + 1} — adding insignia`
           : `Face correction failed for image ${index + 1} — adding insignia to the uncorrected portrait`,
         requestId: body.request_id ?? null,
         payload: { index, corrected: corrected ?? null },

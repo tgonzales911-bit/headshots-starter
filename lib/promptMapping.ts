@@ -66,6 +66,29 @@ function identitySection(first: number, count: number, descriptor?: string | nul
 }
 
 /**
+ * Photo-first portrait: Image 0 is a REAL photo of the customer (a
+ * head-and-shoulders crop of one of their uploads). The model keeps the
+ * person and changes what they are wearing and where they are standing.
+ *
+ * This replaced generating a face from a trained model. A generated face is
+ * a fresh guess at the person every time, and across three generative steps
+ * most guesses were strangers. Editing the real photo keeps the real face:
+ * in a four-model test every output kept the customer's own features.
+ */
+export function buildRedressPrompt(): string {
+  return [
+    "This is a real photo of a person. Turn it into their official fire department Class A portrait WITHOUT changing them.",
+    "Keep their head and face exactly as in the photo: every feature, their hair or bald head and hairline, their facial hair exactly as worn (or clean-shaven), glasses if worn, their age, lines, skin tone and skin texture, their expression and head angle, as if it were the same photograph. Do not beautify, slim, smooth, or make them look younger.",
+    "Change only these things:",
+    "Clothing: replace what they are wearing with a plain dark navy double-breasted wool dress jacket with gold buttons, a white dress shirt and a dark navy tie, fitted naturally to their real build. The jacket is completely plain: smooth bare cloth on the chest, lapels, collar, shoulders and sleeves, with no badge, patch, pin or lettering.",
+    "Background: a solid, even, medium-gray seamless studio backdrop with no texture, gradient or objects, and a crisp clean edge around the subject.",
+    "Lighting: even, soft studio portrait light on the face and jacket, natural colour, replacing any harsh or coloured room light.",
+    "Framing: widen the frame to a 3:4 portrait from the lower chest up, with the head near the top third and the whole chest, both shoulders and both upper sleeves inside the frame, the outer face of the left upper sleeve clearly visible.",
+    "Photorealistic photograph, not illustrated or stylized.",
+  ].join(" ");
+}
+
+/**
  * Face-correction pass, run on its own BEFORE the insignia edit.
  * Image order: [0] generated portrait, [1..count] real photos of the customer.
  *
