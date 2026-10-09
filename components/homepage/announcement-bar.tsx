@@ -1,35 +1,34 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import { X } from "lucide-react"
-import { motion } from "motion/react"
+import { useState } from "react";
+import { X } from "lucide-react";
 
-const isEnabled = process.env.NEXT_PUBLIC_ANNOUNCEMENT_ENABLED === "true"
-const message = process.env.NEXT_PUBLIC_ANNOUNCEMENT_MESSAGE
+const isEnabled = process.env.NEXT_PUBLIC_ANNOUNCEMENT_ENABLED === "true";
+const message = process.env.NEXT_PUBLIC_ANNOUNCEMENT_MESSAGE?.trim();
 
+/** Optional notice above the header. Off unless both env values are set. */
 export default function AnnouncementBar() {
-  const [isVisible, setIsVisible] = useState(true)
+  const [isVisible, setIsVisible] = useState(true);
 
-  if (!isEnabled || !isVisible) return null
+  if (!isEnabled || !message || !isVisible) return null;
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: -20 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="relative bg-black text-white py-2 px-4 text-center text-sm"
+    <div
+      role="region"
+      aria-label="Announcement"
+      className="border-b border-navy-600 bg-navy-700 text-steel"
     >
-      <div className="container mx-auto flex items-center justify-center">
-        <p>{message}</p>
+      <div className="container flex items-center gap-2 py-1">
+        <p className="flex-1 py-2 text-sm">{message}</p>
         <button
+          type="button"
           onClick={() => setIsVisible(false)}
-          className="absolute right-4 top-1/2 -translate-y-1/2 text-white/80 hover:text-white"
-          aria-label="Close announcement"
+          className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-steel-dim hover:text-steel"
+          aria-label="Dismiss announcement"
         >
-          <X className="h-4 w-4" />
+          <X className="h-5 w-5" aria-hidden="true" />
         </button>
       </div>
-    </motion.div>
-  )
+    </div>
+  );
 }
-
-

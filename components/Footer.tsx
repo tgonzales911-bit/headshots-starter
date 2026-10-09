@@ -1,137 +1,54 @@
 import Link from "next/link";
-import { Camera } from "lucide-react";
+import { Shield, Wordmark } from "@/components/homepage/Brand";
+import { MARKETING_URL, SITE_NAME, SITE_TAGLINE, SUPPORT_EMAIL } from "@/lib/site";
+
+const footerLink =
+  "inline-flex min-h-[44px] items-center text-sm text-steel-dim underline-offset-4 transition-colors hover:text-steel hover:underline";
 
 export default function Footer() {
   return (
-    <footer className="border-t py-12 md:py-16">
-      <div className="container px-4 md:px-6">
-        <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-4">
-          <div className="space-y-4">
-            <Link href="/" className="flex items-center gap-2 font-bold text-xl">
-              <Camera className="h-5 w-5 text-primary" />
-              <span>BadgeShot</span>
-            </Link>
-            <p className="text-sm text-muted-foreground">
-              AI-powered badge headshots for first responders.
-            </p>
+    <footer className="border-t border-navy-600 bg-navy-950">
+      <div className="container py-10">
+        <div className="flex flex-col gap-8 md:flex-row md:items-start md:justify-between">
+          <div className="flex items-center gap-3">
+            <Shield size={44} />
+            <div>
+              <Wordmark className="text-xl" />
+              <p className="text-sm text-gold">{SITE_TAGLINE}</p>
+            </div>
           </div>
-          <div className="space-y-4">
-            <h3 className="text-sm font-medium">Product</h3>
-            <ul className="space-y-2">
+
+          <nav aria-label="Footer">
+            <ul className="grid grid-cols-2 gap-x-8 sm:flex sm:gap-x-8">
               <li>
-                <Link href="#how-it-works" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
-                  How It Works
+                <Link href="/#how" className={footerLink}>
+                  How it works
                 </Link>
               </li>
               <li>
-                <Link href="#examples" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
-                  Examples
+                <Link href="/#faq" className={footerLink}>
+                  FAQ
                 </Link>
               </li>
               <li>
-                <Link href="#pricing" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
-                  Pricing
-                </Link>
-              </li>
-            </ul>
-          </div>
-          <div className="space-y-4">
-            <h3 className="text-sm font-medium">Resources</h3>
-            <ul className="space-y-2">
-              <li>
-                <Link 
-                  href="https://github.com/badgeshot" 
-                  className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-                  target="_blank"
-                >
-                  GitHub
-                </Link>
+                <a href={MARKETING_URL} className={footerLink}>
+                  badgeshot.com
+                </a>
               </li>
               <li>
-                <Link
-                  href="https://fal.ai/models/fal-ai/flux-lora-portrait-trainer/api"
-                  className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-                  target="_blank"
-                >
-                  Fal training API
-                </Link>
-              </li>
-              <li>
-                <Link 
-                  href="https://twitter.com/Astria_AI" 
-                  className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-                  target="_blank"
-                >
-                  Twitter
-                </Link>
-              </li>
-            </ul>
-          </div>
-          <div className="space-y-4">
-            <h3 className="text-sm font-medium">Legal</h3>
-            <ul className="space-y-2">
-              <li>
-                <Link 
-                  href="mailto:support@badgeshot.com" 
-                  className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-                >
+                <a href={`mailto:${SUPPORT_EMAIL}`} className={footerLink}>
                   Contact
-                </Link>
-              </li>
-              <li>
-                <Link 
-                  href="https://choosealicense.com/licenses/mit/" 
-                  className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-                  target="_blank"
-                >
-                  License
-                </Link>
+                </a>
               </li>
             </ul>
-          </div>
+          </nav>
         </div>
-        <div className="mt-12 flex flex-col items-center justify-between gap-4 border-t pt-8 md:flex-row">
-          <p className="text-sm text-muted-foreground">
-            © {new Date().getFullYear()} BadgeShot. All rights reserved.
+
+        <div className="mt-8 border-t border-navy-600 pt-6 text-sm text-steel-dim">
+          <p>AI-generated portraits, checked by a person before delivery.</p>
+          <p className="mt-1">
+            © {new Date().getFullYear()} {SITE_NAME}
           </p>
-          <div className="flex items-center gap-4">
-            <p className="text-sm text-muted-foreground">
-              Powered by{" "}
-              <Link
-                href="https://fal.ai/"
-                className="text-primary hover:underline"
-                target="_blank"
-              >
-                Fal
-              </Link>
-              ,{" "}
-              <Link
-                href="https://supabase.com/"
-                className="text-primary hover:underline"
-                target="_blank"
-              >
-                Supabase
-              </Link>
-              , and{" "}
-              {process.env.DEPLOYMENT_PROVIDER === "replit" ? (
-                <Link
-                  href="https://replit.com/@leap-ai/Headshot-AI-Professional-Headshots-with-Leap-AI"
-                  className="text-primary hover:underline"
-                  target="_blank"
-                >
-                  Replit
-                </Link>
-              ) : (
-                <Link
-                  href="https://vercel.com/"
-                  className="text-primary hover:underline"
-                  target="_blank"
-                >
-                  Vercel
-                </Link>
-              )}
-            </p>
-          </div>
         </div>
       </div>
     </footer>

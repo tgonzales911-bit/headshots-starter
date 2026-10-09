@@ -1,120 +1,164 @@
 "use client";
 
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
+import StatusBadge from "@/components/order/StatusBadge";
+import { formatOrderDate, type OrderSummary } from "@/components/order/orderHelpers";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { SUPPORT_EMAIL } from "@/lib/site";
+import { ChevronRight, Loader2 } from "lucide-react";
+import Link from "next/link";
+import { useState } from "react";
 
-import { Icons } from "./icons";
-import { useRouter } from "next/navigation";
-import { modelRowWithSamples } from "@/types/utils";
-import { Trash2 } from "lucide-react";
-import type { MouseEvent } from "react";
-
-type ModelsTableProps = {
-  models: modelRowWithSamples[];
-  onModelDeleted?: (id: number) => void;
+type OrdersListProps = {
+  orders: OrderSummary[];
+  onOrderRemoved?: (id: number) => void;
 };
 
-export default function ModelsTable({ models, onModelDeleted }: ModelsTableProps) {
-  const router = useRouter();
-  const handleRedirect = (id: number) => {
-    router.push(`/overview/models/${id}`);
+/** Removal is only ever offered for orders with no work running. */
+const REMOVABLE = ["pending_payment", "failed", "finished"];
+
+const REMOVE_FAILED = `We could not remove this order. Please try again, or email ${SUPPORT_EMAIL}.`;
+
+export default function ModelsTable({ orders, onOrderRemoved }: OrdersListProps) {
+  const [target, setTarget] = useState<OrderSummary | null>(null);
+  const [removing, setRemoving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const close = () => {
+    if (removing) return;
+    setTarget(null);
+    setError(null);
   };
 
-  const handleDelete = async (e: MouseEvent, model: modelRowWithSamples) => {
-    e.stopPropagation();
-    if (model.status === "processing") {
-      alert("Cannot delete a model that is currently processing.");
-      return;
+  const confirmRemove = async () => {
+    if (!target) return;
+    setRemoving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/models/${target.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { message?: unknown } | null;
+        const serverMessage =
+          typeof body?.message === "string" && body.message.trim() ? body.message.trim() : null;
+        setError(res.status === 409 && serverMessage ? serverMessage : REMOVE_FAILED);
+        return;
+      }
+      onOrderRemoved?.(target.id);
+      setTarget(null);
+    } catch {
+      setError(REMOVE_FAILED);
+    } finally {
+      setRemoving(false);
     }
-    if (
-      !confirm("Delete this model and all its images? This cannot be undone.")
-    ) {
-      return;
-    }
-    const res = await fetch(`/api/models/${model.id}`, { method: "DELETE" });
-    if (!res.ok) {
-      const body = (await res.json().catch(() => null)) as { message?: string } | null;
-      alert(body?.message ?? "Failed to delete model.");
-      return;
-    }
-    onModelDeleted?.(model.id);
   };
 
   return (
-    <div className="rounded-md border">
-      <Table className="w-full">
-        <TableHeader>
-          <TableRow>
-            <TableHead>Name</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead>Type</TableHead>
-            <TableHead>Samples</TableHead>
-            <TableHead className="w-[52px] text-right" />
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {models?.map((model) => (
-            <TableRow
-              key={model.id}
-              onClick={() => handleRedirect(model.id)}
-              className="cursor-pointer h-16"
+    <>
+      <ul className="flex flex-col gap-3">
+        {orders.map((order) => {
+          const removable = REMOVABLE.includes(order.status);
+          const unpaid = order.status === "pending_payment";
+          return (
+            <li
+              key={order.id}
+              className="flex flex-col rounded-lg border bg-card transition-colors focus-within:border-primary hover:border-primary/70 sm:flex-row sm:items-stretch"
             >
-              <TableCell className="font-medium">{model.name}</TableCell>
-              <TableCell>
-                <div>
-                  <Badge
-                    className="flex gap-2 items-center w-min"
-                    variant={
-                      model.status === "finished" ? "default" : "secondary"
-                    }
-                  >
-                    {model.status === "processing" ? "training" : model.status }
-                    {model.status === "processing" && (
-                      <Icons.spinner className="h-4 w-4 animate-spin" />
-                    )}
-                  </Badge>
-                </div>
-              </TableCell>
-              <TableCell>{model.type}</TableCell>
-              <TableCell>
-                <div className="flex gap-2 flex-shrink-0 items-center">
-                  {model.samples.slice(0, 3).map((sample) => (
-                    <Avatar key={sample.id}>
-                      <AvatarImage src={sample.uri} className="object-cover" />
-                    </Avatar>
-                  ))}
-                  {model.samples.length > 3 && (
-                    <Badge className="rounded-full h-10" variant={"outline"}>
-                      +{model.samples.length - 3}
-                    </Badge>
+              <Link
+                href={`/overview/models/${order.id}`}
+                className="flex min-h-[72px] min-w-0 flex-1 items-center gap-4 rounded-lg p-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              >
+                <span className="flex h-16 w-14 shrink-0 items-center justify-center overflow-hidden rounded-md border bg-background">
+                  {order.thumbUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={order.thumbUrl}
+                      alt={`Finished portrait for ${order.customerName}`}
+                      className="h-full w-full object-cover"
+                      loading="lazy"
+                    />
+                  ) : (
+                    <span aria-hidden className="font-display text-xl text-muted-foreground">
+                      {order.customerName.charAt(0).toUpperCase()}
+                    </span>
                   )}
+                </span>
+                <span className="flex min-w-0 flex-1 flex-col gap-1.5">
+                  <span className="truncate text-base font-semibold text-card-foreground">
+                    {order.customerName}
+                  </span>
+                  <span className="text-sm text-muted-foreground">
+                    Placed{" "}
+                    <time dateTime={order.createdAt} suppressHydrationWarning>
+                      {formatOrderDate(order.createdAt)}
+                    </time>
+                  </span>
+                  <span>
+                    <StatusBadge status={order.status} />
+                  </span>
+                  {unpaid && (
+                    <span className="text-sm text-muted-foreground">Nothing was charged.</span>
+                  )}
+                </span>
+                <ChevronRight aria-hidden className="h-5 w-5 shrink-0 text-muted-foreground" />
+              </Link>
+              {removable && (
+                <div className="flex items-center border-t px-2 py-1 sm:border-l sm:border-t-0 sm:px-3">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="h-11 w-full text-sm text-muted-foreground sm:w-auto"
+                    onClick={() => {
+                      setError(null);
+                      setTarget(order);
+                    }}
+                  >
+                    Remove
+                    <span className="sr-only"> order for {order.customerName}</span>
+                  </Button>
                 </div>
-              </TableCell>
-              <TableCell className="text-right p-2" onClick={(e) => e.stopPropagation()}>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
-                  aria-label="Delete model"
-                  onClick={(e) => handleDelete(e, model)}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+
+      <Dialog open={target !== null} onOpenChange={(open) => !open && close()}>
+        <DialogContent className="w-[calc(100%-2rem)] rounded-lg">
+          <DialogHeader>
+            <DialogTitle>Remove this order?</DialogTitle>
+            <DialogDescription className="text-base">
+              Remove this order and its portraits? This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          {error && (
+            <p role="alert" className="rounded-md border border-destructive bg-destructive/15 p-3 text-sm leading-relaxed text-foreground">
+              {error}
+            </p>
+          )}
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button type="button" variant="outline" className="h-11" onClick={close} disabled={removing}>
+              Keep it
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              className="h-11"
+              onClick={confirmRemove}
+              disabled={removing}
+            >
+              {removing && <Loader2 aria-hidden className="h-4 w-4 animate-spin motion-reduce:animate-none" />}
+              Remove order
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

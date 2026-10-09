@@ -11,7 +11,14 @@ export const BACKDROP_REFERENCE_URLS: Record<string, string> = {
   american_flag: AMERICAN_FLAG_REFERENCE_URL,
 };
 
+/**
+ * Image asset for a backdrop key, if it has one. Studio backdrops
+ * (formal_blue, neutral_studio) have no asset — they are rendered in
+ * lib/compositeBackdrop.ts — so this returns undefined for them. Unknown or
+ * legacy keys fall back to the flag, which is what older orders received.
+ */
 export function backdropReferenceUrl(backgroundKey: string): string | undefined {
+  if (backgroundKey === "formal_blue" || backgroundKey === "neutral_studio") return undefined;
   return (
     BACKDROP_REFERENCE_URLS[backgroundKey] ??
     BACKDROP_REFERENCE_URLS["american_flag"]

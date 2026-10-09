@@ -1,4 +1,5 @@
 import { sweepStuckJudges } from "@/lib/falPipeline";
+import { runHealthCheck } from "@/lib/opsHealth";
 import { Database } from "@/types/supabase";
 import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
 import { cookies } from "next/headers";
@@ -8,7 +9,8 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 /**
- * Recovery sweep for orders stuck with 4/4 final results but no judge run.
+ * Scheduled operations check: database health, orders waiting too long, and
+ * the recovery sweep for orders with all results present but no judge run.
  * Callable by the admin (session) or Vercel Cron. If CRON_SECRET is set in
  * the environment, cron calls must carry it as a Bearer token.
  */
@@ -37,8 +39,15 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
+    // Health first: if the database is down, the sweep below cannot run, and
+    // the operator needs to hear about it more than anything else.
+    const health = await runHealthCheck();
+    if (!health.databaseOk) {
+      return NextResponse.json({ success: false, health }, { status: 503 });
+    }
+
     const kicked = await sweepStuckJudges();
-    return NextResponse.json({ success: true, kicked });
+    return NextResponse.json({ success: true, kicked, health });
   } catch (e) {
     console.error("[admin/ops/sweep]", e);
     const message = e instanceof Error ? e.message : "Internal error";

@@ -1,10 +1,16 @@
+import type { Metadata } from "next";
 import { createServerComponentClient } from "@supabase/auth-helpers-nextjs";
-import { cookies, headers } from "next/headers";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { Database } from "../../types/supabase";
+import { Database } from "@/types/supabase";
 import { Login } from "./components/Login";
+import { safeNext } from "./next";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "Sign in",
+};
 
 export default async function LoginPage({
   searchParams,
@@ -17,16 +23,15 @@ export default async function LoginPage({
     data: { user },
   } = await supabase.auth.getUser();
 
+  const next = safeNext(searchParams?.next);
+
   if (user) {
-    redirect("/");
+    redirect(next ?? "/");
   }
 
-  const headersList = headers();
-  const host = headersList.get("host");
-
   return (
-    <div className="flex flex-col flex-1 w-full h-[calc(100vh-73px)]">
-      <Login host={host} searchParams={searchParams} />
+    <div className="container flex justify-center py-10 md:py-16">
+      <Login next={next} />
     </div>
   );
 }

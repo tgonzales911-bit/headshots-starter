@@ -1,13 +1,15 @@
 import { backdropReferenceUrl, PARALLEL_IMAGE_COUNT } from "@/lib/constants";
-import { compositeOntoBackdrop } from "@/lib/compositeBackdrop";
+import { compositeOntoBackdrop, isStudioBackdrop } from "@/lib/compositeBackdrop";
 import { parseModelPromptOptions } from "@/lib/modelPromptOptions";
 import {
+  failModel,
   handleFalPipeline,
   judgeAndAwaitSelection,
   submitEditForSlot,
   submitFinalEditStage,
   type OrchestratorContext,
 } from "@/lib/falPipeline";
+import { alertOperator } from "@/lib/notify";
 import type { Database, Json } from "@/types/supabase";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { timingSafeEqual } from "crypto";
@@ -229,6 +231,26 @@ export async function POST(request: Request) {
         requestId: body.request_id ?? null,
         payload: { details: errMsg, payload: body.payload ?? null },
       });
+
+      // A failed job must never leave a paid order waiting silently.
+      if (stage === "trainer" || stage === "base_generation") {
+        // Nothing downstream can run without these: the order is failed, the
+        // operator is alerted and the customer is told a person is on it.
+        await failModel(supabase, modelId, userId, `${stage} job failed: ${errMsg}`);
+      } else {
+        // One portrait's edit (or its replacement base) failed. The rest of
+        // the order is intact, so keep it open and get a person to re-run
+        // that image from the dashboard.
+        await alertOperator({
+          subject: `Order #${modelId}: one ${stage === "base_regen" ? "regeneration" : "insignia edit"} failed`,
+          lines: [
+            `Image slot: ${typeof index === "number" ? index + 1 : "unknown"}`,
+            `Reason: ${errMsg}`,
+            "The order is still open. Re-run this image from the operator dashboard.",
+          ],
+          modelId,
+        });
+      }
       return NextResponse.json({ ok: true }, { status: 200 });
     }
 
@@ -274,6 +296,7 @@ export async function POST(request: Request) {
           requestId: body.request_id ?? null,
           payload: { details: msg },
         });
+        await failModel(supabase, modelId, userId, msg);
         return NextResponse.json({ ok: true }, { status: 200 });
       }
 
@@ -419,6 +442,24 @@ export async function POST(request: Request) {
         index,
         payloadShape,
       });
+      await insertPipelineEvent(supabase, {
+        userId,
+        modelId,
+        stage: "final_edit",
+        eventType: "webhook_error",
+        message: `Insignia edit ${index + 1} returned no image (often a content filter)`,
+        requestId: body.request_id ?? null,
+        payload: { index },
+      });
+      await alertOperator({
+        subject: `Order #${modelId}: an insignia edit returned no image`,
+        lines: [
+          `Image slot: ${index + 1}`,
+          "The edit model answered without an image, which usually means its content filter declined the request.",
+          "The order is still open. Re-run this image from the operator dashboard.",
+        ],
+        modelId,
+      });
       return NextResponse.json({ ok: true }, { status: 200 });
     }
 
@@ -478,7 +519,7 @@ export async function POST(request: Request) {
     let resultUrl = imageUrl;
     const poForComposite = parseModelPromptOptions(modelForMerge.prompt_options);
     const backdropUrl = backdropReferenceUrl(poForComposite.background);
-    if (backdropUrl) {
+    if (backdropUrl || isStudioBackdrop(poForComposite.background)) {
       const composite = await compositeOntoBackdrop({
         supabase,
         userId: modelForMerge.user_id,
@@ -486,6 +527,7 @@ export async function POST(request: Request) {
         index,
         editedImageUrl: imageUrl,
         backdropUrl,
+        backgroundKey: poForComposite.background,
       });
       if (composite.url) {
         resultUrl = composite.url;
@@ -494,7 +536,7 @@ export async function POST(request: Request) {
           modelId,
           stage: "composite",
           eventType: "completed",
-          message: `Composited image ${index + 1}/4 onto canonical backdrop`,
+          message: `Composited image ${index + 1}/${editExpected} onto the backdrop`,
           requestId: body.request_id ?? null,
           payload: { index, compositeUrl: composite.url },
         });
@@ -504,7 +546,7 @@ export async function POST(request: Request) {
           modelId,
           stage: "composite",
           eventType: "composite_skipped",
-          message: `Composite skipped for image ${index + 1}/4 — delivering raw edit. Reason: ${composite.error}`,
+          message: `Composite skipped for image ${index + 1}/${editExpected} — keeping the raw edit. Reason: ${composite.error}`,
           requestId: body.request_id ?? null,
           payload: { index, error: composite.error },
         });
@@ -578,7 +620,7 @@ export async function POST(request: Request) {
       modelId,
       stage: "final_edit",
       eventType: "webhook_received",
-      message: `Final edit result ${index + 1}/4`,
+      message: `Final edit result ${index + 1}/${editExpected}`,
       requestId: body.request_id ?? null,
       payload: { index, filled, becameComplete },
     });

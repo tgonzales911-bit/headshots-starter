@@ -6,8 +6,10 @@ import { NextResponse } from "next/server";
 import { Resend } from "resend";
 import {
   buildDeliveryEmailHtml,
+  buildDeliveryEmailText,
   DELIVERY_EMAIL_SUBJECT,
 } from "@/lib/deliveryEmail";
+import { SUPPORT_EMAIL } from "@/lib/site";
 
 export const dynamic = "force-dynamic";
 
@@ -192,16 +194,18 @@ export async function POST(request: Request) {
         process.env.RESEND_FROM_EMAIL ??
         process.env.EMAIL_FROM ??
         "orders@badgeshot.com";
+      const emailArgs = {
+        finalUrls: imageUrls,
+        customerName,
+        downloadAllUrl: `${origin}/overview/models/${modelIdNum}`,
+      };
       const { error: sendErr } = await resend.emails.send({
         from: fromEmail,
-        reply_to: "thehalligansupport@gmail.com",
+        reply_to: SUPPORT_EMAIL,
         to: toEmail,
         subject: DELIVERY_EMAIL_SUBJECT,
-        html: buildDeliveryEmailHtml({
-          finalUrls: imageUrls,
-          customerName,
-          downloadAllUrl: `${origin}/overview/models/${modelIdNum}`,
-        }),
+        html: buildDeliveryEmailHtml(emailArgs),
+        text: buildDeliveryEmailText(emailArgs),
       });
       if (sendErr) {
         console.error("[admin/ops/deliver] Resend", sendErr);

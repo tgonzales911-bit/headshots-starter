@@ -3,68 +3,138 @@
 @tailwind utilities;
 
 @layer base {
-  /* BadgeShot: gold primary buttons, navy surfaces, dark navy background */
-  :root {
-    --background: 0 0% 100%;
-    --foreground: 222 47% 11%;
-    --card: 0 0% 100%;
-    --card-foreground: 222 47% 11%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 222 47% 11%;
-    --primary: 43 51% 54%;
-    --primary-foreground: 222 45% 18%;
-    --secondary: 222 35% 92%;
-    --secondary-foreground: 222 45% 18%;
-    --muted: 222 20% 94%;
-    --muted-foreground: 215 16% 47%;
-    --accent: 222 45% 18%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214 32% 88%;
-    --input: 214 32% 88%;
-    --ring: 43 51% 54%;
-    --radius: 0.5rem;
+  /*
+   * BadgeShot is dark-only: there is one theme, declared once. Values are HSL
+   * channels so Tailwind can apply opacity (bg-navy-800/60).
+   *
+   * Navy scale   950 inset · 900 page · 800 card · 700 raised · 600 hairline · 500 control edge
+   * Gold         the single accent. Text on gold is navy-950, never white.
+   * Steel        body text (steel) and secondary text (steel-dim) on navy.
+   */
+  :root,
+  .dark {
+    --navy-950: 220 52% 7%;
+    --navy-900: 221 49% 10%;
+    --navy-800: 222 46% 14%;
+    --navy-700: 222 45% 18%;
+    --navy-600: 222 36% 27%;
+    --navy-500: 221 26% 44%;
+
+    --gold: 44 54% 54%;
+    --gold-bright: 44 64% 63%;
+
+    --steel: 216 25% 95%;
+    --steel-dim: 217 20% 74%;
+
+    --brand-red: 356 66% 53%;
+    --danger: 2 88% 78%;
+
+    /* shadcn/ui roles, all resolved from the scale above */
+    --background: var(--navy-900);
+    --foreground: var(--steel);
+    --card: var(--navy-800);
+    --card-foreground: var(--steel);
+    --popover: var(--navy-800);
+    --popover-foreground: var(--steel);
+    --primary: var(--gold);
+    --primary-foreground: var(--navy-950);
+    --secondary: var(--navy-700);
+    --secondary-foreground: var(--steel);
+    --muted: var(--navy-700);
+    --muted-foreground: var(--steel-dim);
+    --accent: var(--gold);
+    --accent-foreground: var(--navy-950);
+    --destructive: 0 63% 46%;
+    --destructive-foreground: 0 0% 100%;
+    --border: var(--navy-600);
+    --input: var(--navy-500);
+    --ring: var(--gold);
+    --radius: 0.375rem;
+
+    color-scheme: dark;
   }
 
-  .dark {
-    --background: 222 49% 10%;
-    --foreground: 0 0% 98%;
-    --card: 222 45% 18%;
-    --card-foreground: 0 0% 98%;
-    --popover: 222 45% 18%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 43 51% 54%;
-    --primary-foreground: 222 45% 12%;
-    --secondary: 222 40% 22%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 222 35% 22%;
-    --muted-foreground: 215 16% 65%;
-    --accent: 43 51% 54%;
-    --accent-foreground: 222 45% 12%;
-    --destructive: 0 62.8% 50%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 222 35% 24%;
-    --input: 222 35% 24%;
-    --ring: 43 51% 54%;
+  html {
+    scroll-padding-top: 5rem;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+  }
+
+  /* One visible focus treatment everywhere, for keyboard users only. */
+  :focus-visible {
+    outline: 2px solid hsl(var(--gold-bright));
+    outline-offset: 3px;
+  }
+
+  ::selection {
+    background: hsl(var(--gold) / 0.35);
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    html {
+      scroll-behavior: smooth;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 }
 
 @layer components {
-  .pricing-card {
-    @apply relative rounded-lg border bg-background p-6 transition-all hover:shadow-md;
+  /* Primary action: deep navy on gold. 48px tall so it is an easy tap. */
+  .btn-gold {
+    @apply inline-flex min-h-[48px] items-center justify-center rounded-md bg-gold px-6 py-3 text-center text-base font-semibold text-navy-950 transition-colors hover:bg-gold-bright disabled:cursor-not-allowed disabled:opacity-60;
   }
 
-  .pricing-card-popular {
-    @apply border-primary shadow-lg;
+  /* Secondary action: gold outline on navy. */
+  .btn-outline {
+    @apply inline-flex min-h-[48px] items-center justify-center rounded-md border border-gold/70 px-6 py-3 text-center text-base font-semibold text-gold-bright transition-colors hover:bg-gold/10;
   }
 
-  .pricing-badge {
-    @apply absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-primary px-3 py-1 text-xs font-medium text-primary-foreground;
+  /* Inline text link with a tap area of at least 44px when used on its own line. */
+  .link-gold {
+    @apply text-gold-bright underline decoration-gold/50 underline-offset-4 transition-colors hover:decoration-gold-bright;
   }
 
-  .pricing-feature {
-    @apply flex items-center gap-2 text-sm;
+  .link-tap {
+    @apply inline-flex min-h-[44px] items-center;
+  }
+
+  /*
+   * Sleeve braid: the double gold stripe from a Class A cuff. Used as the one
+   * recurring ornament, at the head of the hero and of the price card.
+   */
+  .braid {
+    height: 7px;
+    border-top: 2px solid hsl(var(--gold));
+    border-bottom: 2px solid hsl(var(--gold));
+    transform-origin: left center;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .braid-draw {
+      animation: braid-draw 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) 0.15s both;
+    }
+  }
+
+  @keyframes braid-draw {
+    from {
+      transform: scaleX(0);
+    }
+    to {
+      transform: scaleX(1);
+    }
   }
 }
 

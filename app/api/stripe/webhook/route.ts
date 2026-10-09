@@ -1,6 +1,4 @@
 import { runTrainingAfterPaidCheckout } from "@/lib/stripePostPaymentTraining";
-import { Database } from "@/types/supabase";
-import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
 
@@ -9,17 +7,7 @@ import Stripe from "stripe";
  */
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-
-function adminClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) {
-    throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
-  }
-  return createClient<Database>(url, key, {
-    auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
-  });
-}
+export const maxDuration = 300;
 
 export async function POST(request: Request) {
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
@@ -54,50 +42,19 @@ export async function POST(request: Request) {
       const session = event.data.object as Stripe.Checkout.Session;
 
       if (session.metadata?.modelId) {
+        // startOrder claims the order atomically, so this is safe to run
+        // alongside the browser return (/api/stripe/verify-and-train) and on
+        // Stripe's retries. Failures alert the operator from inside startOrder.
         const trainResult = await runTrainingAfterPaidCheckout(session);
         if (!trainResult.ok) {
-          console.error("[stripe/webhook] post-payment training", trainResult.message);
+          console.error("[stripe/webhook] post-payment start", trainResult.message);
         }
       } else {
-        const userId = session.metadata?.userId;
-        if (!userId) {
-          console.error("[stripe/webhook] checkout.session.completed missing metadata.userId");
-          return NextResponse.json({ received: true }, { status: 200 });
-        }
-
-        const admin = adminClient();
-
-        const { data: existing } = await admin
-          .from("credits")
-          .select("id, credits")
-          .eq("user_id", userId)
-          .maybeSingle();
-
-        const nextCredits = (existing?.credits ?? 0) + 1;
-
-        if (existing) {
-          const { error: updErr } = await admin
-            .from("credits")
-            .update({ credits: nextCredits })
-            .eq("user_id", userId);
-          if (updErr) console.error("[stripe/webhook] credits update", updErr);
-        } else {
-          const { error: insErr } = await admin
-            .from("credits")
-            .insert({ user_id: userId, credits: 1 });
-          if (insErr) console.error("[stripe/webhook] credits insert", insErr);
-        }
-
-        const { error: evErr } = await admin.from("pipeline_events").insert({
-          user_id: userId,
-          model_id: null,
-          stage: "payment",
-          event_type: "completed",
-          message: session.id,
-          payload: { details: session.id },
-          request_id: session.id,
+        // Every checkout this app creates carries a modelId. Anything else
+        // (an old payment link, a test event) is logged and ignored.
+        console.warn("[stripe/webhook] checkout.session.completed without modelId", {
+          session: session.id,
         });
-        if (evErr) console.error("[stripe/webhook] pipeline_events", evErr);
       }
     }
 

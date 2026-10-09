@@ -4,7 +4,13 @@ import {
   rankCandidatesWithRetry,
   runJudgeWithRetry,
 } from "@/lib/judgeNode";
-import { buildDeliveryEmailHtml, DELIVERY_EMAIL_SUBJECT } from "@/lib/deliveryEmail";
+import {
+  buildDeliveryEmailHtml,
+  buildDeliveryEmailText,
+  DELIVERY_EMAIL_SUBJECT,
+} from "@/lib/deliveryEmail";
+import { alertOperator, sendOrderProblem } from "@/lib/notify";
+import { SUPPORT_EMAIL } from "@/lib/site";
 import { rebuildSlotsFromComposites } from "@/lib/repairComposites";
 import { parseModelPromptOptions } from "@/lib/modelPromptOptions";
 import { buildFluxBasePrompt, buildGeminiEditPrompt } from "@/lib/promptMapping";
@@ -65,6 +71,24 @@ const editCandidates = Math.min(
   numCandidates,
   Math.max(4, Number(process.env.FAL_EDIT_CANDIDATES) || 6)
 );
+
+// Edit output size. The endpoint defaults to 1K (about 896x1200), which is a
+// quarter of the 1792x2400 the product promises; 2K at 3:4 is exactly that
+// size for the same per-image price. "4K" doubles the edit cost.
+const editResolution = (process.env.FAL_EDIT_RESOLUTION?.trim() || "2K").toUpperCase();
+const editAspectRatio = process.env.FAL_EDIT_ASPECT_RATIO?.trim() || "3:4";
+
+/** Shared input for every insignia edit call. */
+function editInput(prompt: string, imageUrls: string[]): Record<string, unknown> {
+  return {
+    prompt,
+    image_urls: imageUrls,
+    resolution: editResolution,
+    aspect_ratio: editAspectRatio,
+    output_format: "png",
+    num_images: 1,
+  };
+}
 
 function required(name: keyof typeof env): string {
   const value = env[name];
@@ -216,7 +240,7 @@ async function insertFinalImages(
   console.log("[falPipeline] insertFinalImages", { modelId, count: urls.length });
 }
 
-async function failModel(client: SupabaseClient<Database>, modelId: number, userId: string, message: string) {
+export async function failModel(client: SupabaseClient<Database>, modelId: number, userId: string, message: string) {
   console.error("[falPipeline] failModel", { modelId, message });
   await logEvent(client, {
     userId,
@@ -225,11 +249,38 @@ async function failModel(client: SupabaseClient<Database>, modelId: number, user
     eventType: "error",
     message,
   });
-  await client
+
+  // Only the transition INTO failed notifies anyone, so a burst of failing
+  // webhooks for one order produces one alert and one customer email.
+  const { data: flipped } = await client
     .from("models")
     .update({ status: "failed" })
     .eq("id", modelId)
-    .eq("user_id", userId);
+    .eq("user_id", userId)
+    .neq("status", "failed")
+    .neq("status", "finished")
+    .select("prompt_options");
+  if (!flipped?.length) return;
+
+  await alertOperator({
+    subject: `Order #${modelId} failed`,
+    lines: [`Reason: ${message}`, "The customer has been told a person is on it."],
+    modelId,
+  });
+
+  try {
+    const { data: userData } = await client.auth.admin.getUserById(userId);
+    const email = userData.user?.email;
+    const po = asPromptJson(flipped[0].prompt_options);
+    if (email) {
+      await sendOrderProblem({
+        to: email,
+        customerName: typeof po.name === "string" ? po.name : null,
+      });
+    }
+  } catch (e) {
+    console.error("[falPipeline] failModel customer notice failed", e);
+  }
 }
 
 type IndexedMergeKey = "final_edit_results";
@@ -472,10 +523,7 @@ export async function submitFinalEditStage(model: PipelineModel): Promise<void> 
     editPortraits.map((portraitUrl, index) =>
       submitFal(
         env.geminiEditModel,
-        {
-          prompt,
-          image_urls: [portraitUrl, ...referenceUrls],
-        },
+        editInput(prompt, [portraitUrl, ...referenceUrls]),
         pipelineWebhookUrl(userId, modelId, "final_edit", index)
       )
     )
@@ -530,10 +578,7 @@ export async function submitEditForSlot(
   const prompt = buildGeminiEditPrompt({ hasJacket: Boolean(po.jacket_url?.trim()) });
   return submitFal(
     env.geminiEditModel,
-    {
-      prompt,
-      image_urls: [portraitUrl, ...editReferenceUrls(po)],
-    },
+    editInput(prompt, [portraitUrl, ...editReferenceUrls(po)]),
     pipelineWebhookUrl(userId, model.id, "final_edit", slot)
   );
 }
@@ -606,6 +651,26 @@ export async function judgeAndAwaitSelection(model: PipelineModel, finalUrls: st
     eventType: "awaiting_selection",
     message: `${finalUrls.length} candidates ready — awaiting selection of the final 4 in /admin/ops`,
     payload: { count: finalUrls.length },
+  });
+
+  // The 24-hour promise starts ticking for the customer at checkout; the
+  // operator hears the moment an order needs their eyes instead of having to
+  // keep the dashboard open.
+  const lowest = scores
+    ? Math.min(
+        ...scores.flatMap((s) => [s.face_match.score, s.badge_match.score, s.brass_match.score])
+      )
+    : null;
+  await alertOperator({
+    subject: `Order #${modelId} is ready for your review`,
+    lines: [
+      `${finalUrls.length} candidate portraits are waiting. Pick the best 4 to deliver.`,
+      typeof prev.name === "string" ? `Customer: ${prev.name}` : "",
+      lowest === null
+        ? "The automatic quality check did not run for this order — look closely."
+        : `Lowest automatic score across face, badge and brass: ${lowest}/10.`,
+    ].filter(Boolean),
+    modelId,
   });
 }
 
@@ -897,19 +962,18 @@ export async function deliverResults(model: PipelineModel, finalUrls: string[]):
   if (env.resendApiKey && email) {
     const resend = new Resend(env.resendApiKey);
     const customerName = typeof prev.name === "string" ? prev.name : null;
+    const emailArgs = {
+      finalUrls,
+      customerName,
+      downloadAllUrl: `${siteOrigin()}/overview/models/${modelId}`,
+    };
     await resend.emails.send({
       from: env.fromEmail,
-      // Support decision 2026-08-02: inbound MX on badgeshot.com stays
-      // unconfigured (protects the Resend send records); replies route to
-      // the support Gmail instead.
-      reply_to: "thehalligansupport@gmail.com",
+      reply_to: SUPPORT_EMAIL,
       to: email,
       subject: DELIVERY_EMAIL_SUBJECT,
-      html: buildDeliveryEmailHtml({
-        finalUrls,
-        customerName,
-        downloadAllUrl: `${siteOrigin()}/overview/models/${modelId}`,
-      }),
+      html: buildDeliveryEmailHtml(emailArgs),
+      text: buildDeliveryEmailText(emailArgs),
     });
     console.log("[falPipeline] deliverResults email sent", { modelId, to: email });
   } else {
@@ -1063,123 +1127,6 @@ export async function handleFalPipeline(ctx: OrchestratorContext): Promise<void>
     return;
   }
 
-  if (ctx.stage === "base_generation") {
-    await logEvent(supabase, {
-      userId: ctx.userId,
-      modelId: ctx.modelId,
-      stage: "base_generation",
-      eventType: "webhook_received",
-      requestId: ctx.incoming.request_id ?? null,
-      message: "Base generation webhook received",
-      payload: ctx.incoming.payload ?? null,
-    });
-
-    const baseImages = toUrls(ctx.incoming.payload?.images);
-    console.log("[falPipeline] base_generation images", { count: baseImages.length });
-    if (baseImages.length < PARALLEL) {
-      await failModel(
-        supabase,
-        ctx.modelId,
-        ctx.userId,
-        `Base generation: expected ${PARALLEL} images, got ${baseImages.length}.`
-      );
-      return;
-    }
-
-    const modelRow = await loadModel(supabase, ctx.modelId, ctx.userId);
-    if (!modelRow) return;
-
-    const prevPo = asPromptJson(modelRow.prompt_options);
-    await supabase
-      .from("models")
-      .update({
-        prompt_options: {
-          ...prevPo,
-          base_image_urls: baseImages.slice(0, PARALLEL),
-        } as Json,
-      })
-      .eq("id", ctx.modelId)
-      .eq("user_id", ctx.userId);
-
-    const updated = await loadModel(supabase, ctx.modelId, ctx.userId);
-    if (!updated) return;
-
-    console.log("[falPipeline] base_generation complete → submitFinalEditStage", { modelId: ctx.modelId });
-    await submitFinalEditStage(updated);
-    return;
-  }
-
-  if (ctx.stage === "final_edit") {
-    const idx = ctx.index;
-    if (typeof idx !== "number" || idx < 0 || idx >= PARALLEL) {
-      await failModel(supabase, ctx.modelId, ctx.userId, "final_edit webhook missing valid index.");
-      return;
-    }
-
-    const url = firstImageUrl(ctx.incoming.payload);
-    if (!url) {
-      await failModel(supabase, ctx.modelId, ctx.userId, "Final edit payload missing image URL.");
-      return;
-    }
-
-    console.log("[falPipeline] final_edit webhook", { modelId: ctx.modelId, index: idx });
-    await logEvent(supabase, {
-      userId: ctx.userId,
-      modelId: ctx.modelId,
-      stage: "final_edit",
-      eventType: "webhook_received",
-      requestId: ctx.incoming.request_id ?? null,
-      message: `Final edit result ${idx + 1}/${PARALLEL}`,
-      payload: { index: idx },
-    });
-
-    const merged = await mergePipelineIndexedResult(supabase, {
-      modelId: ctx.modelId,
-      userId: ctx.userId,
-      key: "final_edit_results",
-      slot: idx,
-      url,
-    });
-
-    if (!merged.ok) {
-      await failModel(supabase, ctx.modelId, ctx.userId, `Final edit merge failed: ${merged.message}`);
-      return;
-    }
-
-    const { filled, results, becameComplete } = merged;
-    const shouldAdvance = becameComplete || filled >= PARALLEL;
-    console.log("[falPipeline] final_edit merge", { filled, becameComplete, shouldAdvance });
-
-    if (filled < PARALLEL) {
-      await logEvent(supabase, {
-        userId: ctx.userId,
-        modelId: ctx.modelId,
-        stage: "final_edit",
-        eventType: "partial_complete",
-        requestId: ctx.incoming.request_id ?? null,
-        message: `Final edit ${filled}/${PARALLEL}`,
-      });
-      return;
-    }
-
-    if (!shouldAdvance) {
-      return;
-    }
-
-    const modelRow = await loadModel(supabase, ctx.modelId, ctx.userId);
-    if (!modelRow) return;
-
-    const finals = results.filter((u) => u.length > 0);
-    if (finals.length < PARALLEL) {
-      await failModel(
-        supabase,
-        ctx.modelId,
-        ctx.userId,
-        `Final edit: expected ${PARALLEL} URLs after merge, got ${finals.length}.`
-      );
-      return;
-    }
-    await deliverResults(modelRow, finals.slice(0, PARALLEL));
-    return;
-  }
+  // base_generation, base_regen and final_edit webhooks are handled directly
+  // in app/api/fal/pipeline-webhook/route.ts.
 }

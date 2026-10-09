@@ -28,6 +28,13 @@ export async function GET(
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
   }
 
+  // Pipeline internals (events, request ids, intermediate images) are for the
+  // operator only. Customers get their status from the order page.
+  const adminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
+  if (!adminEmail || user.email?.toLowerCase() !== adminEmail) {
+    return NextResponse.json({ message: "Forbidden" }, { status: 403 });
+  }
+
   const { data: model, error: modelError } = await supabase
     .from("models")
     .select("*")

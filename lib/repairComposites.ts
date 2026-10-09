@@ -1,6 +1,6 @@
 /**
  * Rebuild an order's final_edit_results from the stored composite files:
- * composites/{userId}/{modelId}/final_{index}_{timestamp}.png — latest per
+ * composites/{userId}/{modelId}/final_{index}_{timestamp}.jpg (or .png for older orders) — latest per
  * index. Used by the admin repair action and the recovery sweep (covers the
  * case where composites uploaded fine but the merge RPC failed).
  */
@@ -24,7 +24,7 @@ export async function rebuildSlotsFromComposites(
 
   const latestByIndex = new Map<number, { ts: number; name: string }>();
   for (const f of files ?? []) {
-    const m = f.name.match(/^final_(\d)_(\d+)\.png$/);
+    const m = f.name.match(/^final_(\d+)_(\d+)\.(?:png|jpe?g)$/);
     if (!m) continue;
     const idx = Number(m[1]);
     const ts = Number(m[2]);

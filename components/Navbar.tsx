@@ -1,27 +1,21 @@
-import { AvatarIcon } from "@radix-ui/react-icons";
 import { createServerComponentClient } from "@supabase/auth-helpers-nextjs";
 import { cookies } from "next/headers";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "./ui/dropdown-menu";
 import Link from "next/link";
-import { Button } from "./ui/button";
-import React from "react";
 import { Database } from "@/types/supabase";
-import ClientSideCredits from "./realtime/ClientSideCredits";
-import { ThemeToggle } from "./homepage/theme-toggle";
+import { Shield, Wordmark } from "@/components/homepage/Brand";
+import { SITE_NAME } from "@/lib/site";
 
 export const dynamic = "force-dynamic";
 
 export const revalidate = 0;
 
-const stripeIsConfigured = process.env.NEXT_PUBLIC_STRIPE_IS_ENABLED === "true";
+const navLink =
+  "inline-flex min-h-[44px] items-center rounded-md px-2.5 text-sm font-medium text-steel-dim transition-colors hover:text-steel sm:px-3";
 
+/**
+ * Server component on purpose: the operator check compares against
+ * ADMIN_EMAIL here, so that address is never sent to the browser.
+ */
 export default async function Navbar() {
   const supabase = createServerComponentClient<Database>({ cookies });
 
@@ -29,76 +23,46 @@ export default async function Navbar() {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const { data: credits } = await supabase
-    .from("credits")
-    .select("*")
-    .eq("user_id", user?.id ?? "")
-    .single();
+  const adminEmail = process.env.ADMIN_EMAIL;
+  const isOperator = Boolean(user?.email && adminEmail && user.email === adminEmail);
 
   return (
-    <header className="sticky top-0 z-[100] w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-      <div className="container flex h-16 items-center justify-between">
-        <Link href="/" className="flex items-center gap-2">
-          <img
-            src="/Badge_SHOT_SHIELD_4K.png"
-            alt="BadgeShot"
-            className="h-10 w-auto"
-          />
-          <span className="font-bold text-xl text-yellow-400">BadgeShot</span>
+    <header className="sticky top-0 z-[100] w-full border-b border-navy-600 bg-navy-950/95 backdrop-blur supports-[backdrop-filter]:bg-navy-950/85">
+      <div className="container flex h-16 items-center justify-between gap-2">
+        <Link
+          href="/"
+          aria-label={`${SITE_NAME} home`}
+          className="flex min-h-[44px] items-center gap-2.5"
+        >
+          <Shield size={36} priority />
+          {/* Signed-in phones need the room for the links, so the name yields below 420px. */}
+          <Wordmark className={user ? "hidden text-xl min-[420px]:inline" : "text-xl"} />
         </Link>
 
-        {user && (
-          <nav className="hidden md:flex gap-6">
-            <Link href="/overview" className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors">
-              Home
+        {user ? (
+          <nav aria-label="Account" className="flex items-center">
+            <Link href="/overview" className={navLink}>
+              My orders
             </Link>
+            {isOperator && (
+              <Link href="/admin/ops" className={navLink}>
+                Operator
+              </Link>
+            )}
+            <form action="/auth/sign-out" method="post" className="flex">
+              <button type="submit" className={navLink}>
+                Sign out
+              </button>
+            </form>
           </nav>
+        ) : (
+          <Link
+            href="/login"
+            className="inline-flex min-h-[44px] items-center rounded-md border border-gold/70 px-4 text-sm font-semibold text-gold-bright transition-colors hover:bg-gold/10"
+          >
+            Sign in
+          </Link>
         )}
-
-        <div className="flex items-center gap-4">
-          <ThemeToggle />
-          
-          {!user && (
-            <>
-              <Link href="/login" className="hidden sm:block text-sm font-medium hover:text-primary transition-colors">
-                Login
-              </Link>
-              <Link href="/login">
-                <Button>Create headshots</Button>
-              </Link>
-            </>
-          )}
-
-          {user && (
-            <div className="flex items-center gap-4">
-              {stripeIsConfigured && (
-                <ClientSideCredits creditsRow={credits ? credits : null} />
-              )}
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon" className="h-8 w-8 p-0">
-                    <AvatarIcon className="h-6 w-6 text-primary" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent className="w-56 z-[101]">
-                  <DropdownMenuLabel className="text-primary text-center overflow-hidden text-ellipsis">
-                    {user.email}
-                  </DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  <form action="/auth/sign-out" method="post">
-                    <Button
-                      type="submit"
-                      className="w-full text-left"
-                      variant="ghost"
-                    >
-                      Log out
-                    </Button>
-                  </form>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          )}
-        </div>
       </div>
     </header>
   );

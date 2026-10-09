@@ -18,6 +18,7 @@ function isAllowedImage(file: File): boolean {
     t === "image/jpeg" ||
     t === "image/jpg" ||
     t === "image/png" ||
+    t === "image/webp" ||
     t === "image/gif"
   ) {
     return true;
@@ -27,13 +28,16 @@ function isAllowedImage(file: File): boolean {
     n.endsWith(".jpg") ||
     n.endsWith(".jpeg") ||
     n.endsWith(".png") ||
+    n.endsWith(".webp") ||
     n.endsWith(".gif")
   );
 }
 
 /** Avoid path traversal; keep a usable filename for the object key. */
 function safeFileName(name: string): string {
-  const base = name.replace(/[/\\]/g, "_").trim() || "image.jpg";
+  // Letters, digits, dot, dash and underscore only: the name ends up in a
+  // public URL, so nothing that needs escaping (spaces, #, ?, %) may survive.
+  const base = name.replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "") || "image.jpg";
   return base.slice(0, 200);
 }
 
@@ -77,9 +81,15 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const file = raw;
 
+  // Insignia and jacket reference photos keep far more detail than face
+  // photos: the lettering on a badge has to survive into the edit step.
+  const kind = formData.get("kind") === "reference" ? "reference" : "selfie";
+  const maxSide = kind === "reference" ? 2400 : 1536;
+  const quality = kind === "reference" ? 92 : 88;
+
   if (!isAllowedImage(file)) {
     return NextResponse.json(
-      { message: "Only JPEG, PNG, and GIF images are allowed" },
+      { message: "Only JPEG, PNG, and WebP images are allowed" },
       { status: 400 }
     );
   }
@@ -112,11 +122,12 @@ export async function POST(request: Request): Promise<NextResponse> {
     let compressed: Buffer;
     try {
       compressed = await sharp(buffer)
-        .resize(1200, 1200, {
+        .rotate() // bake in the phone's EXIF orientation before metadata is dropped
+        .resize(maxSide, maxSide, {
           fit: "inside",
           withoutEnlargement: true,
         })
-        .jpeg({ quality: 85 })
+        .jpeg({ quality, chromaSubsampling: kind === "reference" ? "4:4:4" : "4:2:0" })
         .toBuffer();
     } catch (compressErr) {
       console.error("Image compression failed:", compressErr);

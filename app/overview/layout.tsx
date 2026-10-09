@@ -1,27 +1,17 @@
-import Login from "../login/page";
-import { createServerComponentClient } from "@supabase/auth-helpers-nextjs";
-import { cookies } from "next/headers";
-
 export const dynamic = "force-dynamic";
 
-export default async function RootLayout({
+/**
+ * Shared frame for the signed-in order pages. Each page checks the session
+ * itself and sends signed-out visitors to /login with a `next` path, so they
+ * land back on the page they asked for (for example from the delivery email).
+ */
+export default function OverviewLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const supabase = createServerComponentClient({ cookies });
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return <Login />;
-  }
-
-  // Updated to ensure compatibility with new layout
   return (
-    <div className="flex w-full flex-col px-4 lg:px-40 py-6">
+    <div className="mx-auto flex w-full max-w-5xl flex-col px-4 py-6 sm:px-6 sm:py-10">
       {children}
     </div>
   );

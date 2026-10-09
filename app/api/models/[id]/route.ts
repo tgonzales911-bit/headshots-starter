@@ -1,3 +1,4 @@
+import { isInFlight, SUPPORT_EMAIL } from "@/lib/site";
 import { Database } from "@/types/supabase";
 import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
 import { createClient } from "@supabase/supabase-js";
@@ -40,12 +41,21 @@ export async function DELETE(
 
     const { data: model, error: fetchErr } = await admin
       .from("models")
-      .select("id, user_id")
+      .select("id, user_id, status")
       .eq("id", modelId)
       .single();
 
     if (fetchErr || !model || model.user_id !== user.id) {
       return NextResponse.json({ message: "Not found" }, { status: 404 });
+    }
+
+    if (isInFlight(model.status)) {
+      return NextResponse.json(
+        {
+          message: `This order is being worked on and can't be removed right now. If you need to cancel it, email ${SUPPORT_EMAIL}.`,
+        },
+        { status: 409 }
+      );
     }
 
     const { error: headshotsErr } = await admin.from("headshots").delete().eq("model_id", modelId);

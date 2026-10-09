@@ -9,24 +9,22 @@ export type FluxBasePromptContext = {
 
 /** fal-ai/flux-lora — Class A fire service portrait base; insignia added in a later stage. */
 export function buildFluxBasePrompt(ctx?: FluxBasePromptContext): string {
-  const dept = ctx?.department?.trim();
-  const rank = ctx?.rank?.trim();
-
+  // FLUX has no negative prompt: naming "badges", "patches" or "insignia" —
+  // even to forbid them — makes the model draw them (base portraits were
+  // coming back with invented patches and collar pins that the edit step then
+  // had to erase). So the uniform is described only by what IS there: plain,
+  // bare cloth. The real insignia are added afterwards from the customer's
+  // own photos.
   const fireClassA =
-    "Subject in Class A navy fire department dress uniform — double-breasted jacket with gold buttons, white shirt, tie. No insignia, no patches, no badges, no collar brass. Natural build and body proportions consistent with the training photos — do not exaggerate body mass, broaden the frame, or slim the subject. Neutral gray seamless studio background. Professional headshot composition, 85mm lens equivalent at 6 feet subject distance, f/2.8, single key light from upper left, no fill light, defined jaw and cheekbone shadow. ISO 800 film grain, visible pores, natural skin texture. Not plastic, not waxy, no digital smoothing.";
+    "Subject wearing a plain dark navy double-breasted wool dress jacket with gold buttons, white dress shirt, dark navy tie. The jacket is completely plain: smooth bare cloth on the chest, bare smooth lapels and collar, bare smooth sleeves and shoulders. Natural build and body proportions consistent with the training photos. Body turned slightly, face toward the camera, calm confident expression. Plain neutral gray seamless studio background. Professional department portrait framed from the lower chest up, with the whole chest, both shoulders and both upper sleeves in frame, 85mm lens at 6 feet, f/2.8, single soft key light from upper left with gentle fill, natural shadow under the jaw. Sharp focus on the eyes, fine film grain, visible pores and natural skin texture, true-to-life skin tone.";
 
-  const prefix: string[] = [];
-  if (rank) {
-    prefix.push(`Subject role: ${rank}.`);
-  }
-  if (dept) {
-    prefix.push(`Organization / service: ${dept}.`);
-  }
+  // The department name and rank are deliberately NOT put in the prompt:
+  // given "Thornton Fire Department", the model writes a made-up "THORNT…"
+  // patch on the sleeve. Rank and department reach the portrait only through
+  // the customer's real insignia photos.
+  void ctx;
 
-  return [...prefix, fireClassA]
-    .join(" ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return fireClassA.replace(/\s+/g, " ").trim();
 }
 
 export type GeminiEditPromptOptions = {
