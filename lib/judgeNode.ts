@@ -37,9 +37,7 @@ export function failingIndices(scores: JudgeScore[]): number[] {
     .map((s) => s.index);
 }
 
-type GeminiPart =
-  | { text: string }
-  | { inline_data: { mime_type: string; data: string } };
+import { geminiGenerateJson, GeminiPart } from "@/lib/gemini";
 
 async function fetchImagePart(url: string): Promise<GeminiPart | null> {
   try {
@@ -132,8 +130,6 @@ export async function runJudge(args: {
     console.warn("[judgeNode] GEMINI_API_KEY not set — skipping judge");
     return { scores: null, error: "GEMINI_API_KEY is not set in this deployment's environment" };
   }
-  const model = process.env.GEMINI_JUDGE_MODEL?.trim() || "gemini-3-flash";
-
   const outputParts: GeminiPart[] = [];
   for (let i = 0; i < args.outputUrls.length; i++) {
     const part = await fetchImagePart(args.outputUrls[i]);
@@ -168,41 +164,12 @@ export async function runJudge(args: {
     ...refParts,
   ];
 
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ role: "user", parts }],
-        generationConfig: {
-          temperature: 0,
-          response_mime_type: "application/json",
-        },
-      }),
-    }
-  );
-
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "");
-    console.error("[judgeNode] Gemini API error", { status: res.status, errText: errText.slice(0, 500) });
-    return {
-      scores: null,
-      error: `Gemini API HTTP ${res.status}: ${sanitizeError(errText).slice(0, 300)}`,
-    };
+  const { text: answer, error: callError } = await geminiGenerateJson(parts);
+  if (!answer) {
+    console.error("[judgeNode] judge call failed", { callError });
+    return { scores: null, error: callError ?? "Gemini returned an empty response" };
   }
-
-  const body = (await res.json()) as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }>;
-  };
-  const text = (body.candidates?.[0]?.content?.parts ?? [])
-    .filter((p) => p.thought !== true)
-    .map((p) => p.text ?? "")
-    .join("");
-  if (!text.trim()) {
-    console.error("[judgeNode] empty judge response");
-    return { scores: null, error: "Gemini returned an empty response" };
-  }
+  const text = answer;
 
   const scores = parseScores(text, args.outputUrls.length);
   if (!scores) {
@@ -333,7 +300,6 @@ export async function rankCandidates(args: {
   if (!apiKey) {
     return { result: null, error: "GEMINI_API_KEY is not set in this deployment's environment" };
   }
-  const model = process.env.GEMINI_JUDGE_MODEL?.trim() || "gemini-3-flash";
 
   const parts: GeminiPart[] = [
     { text: rankInstructions(args.candidateUrls.length, args.selfieUrls.length) },
@@ -348,32 +314,9 @@ export async function rankCandidates(args: {
     if (part) parts.push({ text: `SELFIE ${i}:` }, part);
   }
 
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ role: "user", parts }],
-        generationConfig: { temperature: 0, response_mime_type: "application/json" },
-      }),
-    }
-  );
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "");
-    return {
-      result: null,
-      error: `Gemini API HTTP ${res.status}: ${sanitizeError(errText).slice(0, 300)}`,
-    };
-  }
-  const body = (await res.json()) as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }>;
-  };
-  const text = (body.candidates?.[0]?.content?.parts ?? [])
-    .filter((p) => p.thought !== true)
-    .map((p) => p.text ?? "")
-    .join("");
-  if (!text.trim()) return { result: null, error: "Gemini returned an empty ranking response" };
+  const { text: answer, error: callError } = await geminiGenerateJson(parts);
+  if (!answer) return { result: null, error: callError ?? "Gemini returned an empty ranking response" };
+  const text = answer;
   const result = parseRanking(text, args.candidateUrls.length);
   if (!result) return { result: null, error: "Could not parse ranking response" };
   return { result, error: null };

@@ -1,5 +1,6 @@
 import sharp from "sharp";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { geminiGenerateJson, GeminiPart } from "@/lib/gemini";
 
 /**
  * Identity preparation.
@@ -53,58 +54,14 @@ const BUCKET = "training-datasets";
 const CROP_SIZE = 1024;
 const MAX_REFERENCES = 4;
 
-type GeminiPart =
-  | { text: string }
-  | { inline_data: { mime_type: string; data: string } };
-
-function geminiModel(): string {
-  return (
-    process.env.GEMINI_VISION_MODEL?.trim() ||
-    process.env.GEMINI_JUDGE_MODEL?.trim() ||
-    "gemini-3-flash"
-  );
-}
-
 async function geminiJson(parts: GeminiPart[]): Promise<unknown | null> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return null;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel()}:generateContent?key=${apiKey}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ role: "user", parts }],
-            generationConfig: { temperature: 0, response_mime_type: "application/json" },
-          }),
-        }
-      );
-      if (res.ok) {
-        const body = (await res.json()) as {
-          candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }>;
-        };
-        const text = (body.candidates?.[0]?.content?.parts ?? [])
-          .filter((p) => p.thought !== true)
-          .map((p) => p.text ?? "")
-          .join("")
-          .trim();
-        if (!text) return null;
-        try {
-          return JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/g, ""));
-        } catch {
-          return null;
-        }
-      }
-      // Retry only overload / rate-limit responses.
-      if (res.status !== 429 && res.status < 500) return null;
-    } catch {
-      /* network error: retry */
-    }
-    await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+  const { text } = await geminiGenerateJson(parts);
+  if (!text) return null;
+  try {
+    return JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/g, ""));
+  } catch {
+    return null;
   }
-  return null;
 }
 
 function photoInstructions(): string {

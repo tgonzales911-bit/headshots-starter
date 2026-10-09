@@ -382,7 +382,7 @@ async function ensureIdentity(
       userId: model.user_id,
       modelId: model.id,
     });
-    if (!built) return null;
+    if (!built) return identityFallback(model, selfies, "the photo analysis returned nothing");
     prev.identity = built as unknown as Record<string, unknown>;
     const supabase = adminClient();
     const { data: fresh } = await supabase
@@ -407,8 +407,36 @@ async function ensureIdentity(
     return built;
   } catch (e) {
     console.error("[falPipeline] ensureIdentity failed (continuing without it)", { modelId: model.id, e });
-    return null;
+    return identityFallback(model, selfies, e instanceof Error ? e.message : String(e));
   }
+}
+
+/**
+ * When the photo analysis is unavailable the edit still gets real photos of
+ * the customer: three of their selfies as uploaded, spread across the set.
+ * Not saved, so the next run tries the full analysis again. Logged, because a
+ * silent miss here is exactly how a stranger's face gets delivered.
+ */
+async function identityFallback(
+  model: PipelineModel,
+  selfies: string[],
+  reason: string
+): Promise<IdentityProfile> {
+  const n = selfies.length;
+  const picks = Array.from(new Set([Math.floor(n * 0.6), Math.floor(n * 0.75), Math.floor(n * 0.1)]))
+    .map((i) => selfies[Math.min(n - 1, i)])
+    .filter(Boolean);
+  if (model.user_id) {
+    await logEvent(adminClient(), {
+      userId: model.user_id,
+      modelId: model.id,
+      stage: "identity",
+      eventType: "fallback",
+      message: `Photo analysis unavailable (${reason.slice(0, 160)}) — using ${picks.length} uploaded photos as face references, no appearance description`,
+      payload: { reference_urls: picks },
+    });
+  }
+  return { version: 1, noun: "person", descriptor: "", photos: [], reference_urls: picks };
 }
 
 /**
