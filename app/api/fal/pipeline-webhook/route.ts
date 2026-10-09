@@ -6,6 +6,7 @@ import {
   handleFalPipeline,
   judgeAndAwaitSelection,
   submitEditForSlot,
+  submitInsigniaEditForSlot,
   submitFinalEditStage,
   type OrchestratorContext,
 } from "@/lib/falPipeline";
@@ -215,6 +216,44 @@ export async function POST(request: Request) {
     }
 
     const ok = String(body.status ?? "").toUpperCase() === "OK";
+
+    // Face-correction pass finished (or failed): run the insignia pass on its
+    // result. If it produced nothing, the insignia pass runs on the original
+    // portrait so the image is never left empty, and the timeline says so.
+    if (stage === "identity_edit") {
+      if (typeof index !== "number" || index < 0) {
+        return NextResponse.json({ ok: true }, { status: 200 });
+      }
+      const { data: forInsignia } = await supabase.from("models").select("*").eq("id", modelId).single();
+      if (!forInsignia?.user_id) {
+        return NextResponse.json({ ok: true }, { status: 200 });
+      }
+      const corrected = ok
+        ? extractImageUrl(body.payload) ?? extractAllImageUrls(body.payload)[0]
+        : undefined;
+      const poNow =
+        forInsignia.prompt_options && typeof forInsignia.prompt_options === "object" && !Array.isArray(forInsignia.prompt_options)
+          ? (forInsignia.prompt_options as Record<string, unknown>)
+          : {};
+      const originals = Array.isArray(poNow.edit_portrait_urls) ? poNow.edit_portrait_urls : [];
+      const original = typeof originals[index] === "string" ? (originals[index] as string) : "";
+      const portrait = corrected || original;
+      await insertPipelineEvent(supabase, {
+        userId,
+        modelId,
+        stage: "identity",
+        eventType: corrected ? "face_corrected" : "face_correction_failed",
+        message: corrected
+          ? `Face corrected from the customer's photos for image ${index + 1} — adding insignia`
+          : `Face correction failed for image ${index + 1} — adding insignia to the uncorrected portrait`,
+        requestId: body.request_id ?? null,
+        payload: { index, corrected: corrected ?? null },
+      });
+      if (portrait) {
+        await submitInsigniaEditForSlot(forInsignia, index, portrait);
+      }
+      return NextResponse.json({ ok: true }, { status: 200 });
+    }
 
     if (!ok) {
       const errMsg =

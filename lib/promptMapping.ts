@@ -66,6 +66,33 @@ function identitySection(first: number, count: number, descriptor?: string | nul
 }
 
 /**
+ * Face-correction pass, run on its own BEFORE the insignia edit.
+ * Image order: [0] generated portrait, [1..count] real photos of the customer.
+ *
+ * Kept separate on purpose: handed the insignia references and the face
+ * photos in one call (eight images), the edit model stopped editing and drew
+ * a new picture of a different man with invented patches in four of six
+ * attempts. With only the portrait and the face photos it corrects the face
+ * and leaves the rest alone.
+ */
+export function buildIdentityEditPrompt(count: number): string {
+  const n = Math.max(1, Math.floor(count));
+  const range = n === 1 ? "Image 1 is a real photo" : `Images 1 to ${n} are real photos`;
+  const those = n === 1 ? "that photo" : "those photos";
+  return [
+    "This is an EDIT of Image 0, not a new picture. Change only the head and face; keep everything else in Image 0 exactly as it is.",
+    `Image 0 is a generated formal portrait. Its face is only an approximation. ${range} of the person this portrait is of.`,
+    `The finished portrait must show the REAL person from ${those}, recognisable instantly by people who know them.`,
+    "Correct the face and head in Image 0 to match the real photos exactly: the same face shape and width, forehead, brow, eyes and eye colour, nose, mouth, jaw, chin and ears; the same apparent age with their real lines and skin texture; the same skin tone and complexion; the same hair colour, or the same bald head and hairline; the same facial hair, worn exactly as in the photos (same style, position, length and colour), or clean-shaven if they are clean-shaven in the photos.",
+    "Do not beautify, slim, smooth, or make them look younger. Do not average their features toward a generic face.",
+    "Keep the head position, camera angle, calm confident expression and studio lighting of Image 0.",
+    "Take nothing else from the real photos: not their clothing, background, lighting, camera distortion or pose.",
+    "Keep the jacket, shirt, tie, buttons, sleeves, body, framing and plain background of Image 0 unchanged. Do not add any badge, patch, pin, lettering or insignia.",
+    "Output must be photorealistic, not illustrated or stylized.",
+  ].join(" ");
+}
+
+/**
  * fal-ai/gemini-3-pro-image-preview/edit
  * Image order: [0] portrait, [1] badge, [2] shoulder patch, [3] collar brass,
  * [4] Class A jacket (optional — only when hasJacket is true).
@@ -97,7 +124,7 @@ export function buildGeminiEditPrompt(opts?: GeminiEditPromptOptions): string {
     "Image 2 is a photo of the customer's real shoulder patch. The input portrait may ALREADY have a patch rendered on the sleeve — if so, completely REMOVE and REPLACE the entire shoulder-patch area with the reference patch. Never layer, blend, or composite the reference over an existing patch: no doubled crests, no ghosted or duplicated text, no overlapping outlines.",
     "Render the reference patch as the ONLY patch on the uniform — exactly ONE instance, on the LEFT sleeve, upper arm, as a sewn embroidered patch, upright and correctly oriented, with the same artwork, text, and colors as the reference. The sleeve fabric around it must be clean uniform material with no remnants of any previous patch.",
     "4. COLLAR BRASS:",
-    "Image 3 is a photo of the customer's real collar brass insignia. Reproduce THIS brass exactly — same shape, device, and metal finish — placed on BOTH collar points. The brass must be small and proportional, approximately 3/4 inch diameter as physically worn on a real Class A uniform collar. Do not scale it up or make it decorative. It should look like it is physically pinned to each collar tip. Each brass piece should be no larger than the width of the collar tip itself — approximately the size of a shirt button when viewed at portrait distance. If in doubt, make it smaller.",
+    "Image 3 is a photo of the customer's real collar brass insignia. Reproduce THIS brass exactly — same shape, device, and metal finish — placed on BOTH collar points. The brass must be small and proportional, approximately 3/4 inch diameter as physically worn on a real Class A uniform collar. Do not scale it up or make it decorative. It should look like it is physically pinned to each collar tip. The reference photo may show the pins lying at any angle; on the uniform they are worn upright. If the insignia is crossed bugles (speaking trumpets), the wide flared bell ends point DOWN toward the collar point and the narrow mouthpiece ends point up, on both collars, with the same number of bugles as in Image 3. Each brass piece should be no larger than the width of the collar tip itself — approximately the size of a shirt button when viewed at portrait distance. If in doubt, make it smaller.",
     "5. JACKET:",
     hasJacket
       ? "Image 4 is a photo of the customer's real Class A jacket. Match the jacket in the output to THIS jacket — same cut, lapel style, button count, button finish, and breast configuration (e.g. double-breasted with gold buttons if that is what is shown). Keep the jacket fit natural on the subject's body from Image 0."

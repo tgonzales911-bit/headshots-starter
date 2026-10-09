@@ -82,8 +82,8 @@ function descriptorInstructions(count: number): string {
     "Describe only the lasting, visible appearance that every portrait of this person must reproduce. Return ONLY JSON shaped:",
     '{"noun":"man","descriptor":"..."}',
     '- noun: "man", "woman" or "person".',
-    "- descriptor: one phrase of at most 40 words, starting with the noun, covering: hair (or a bald or shaved head) and its colour, facial hair exactly as worn (style, where on the face, colour — or clean-shaven), glasses if worn in most photos, apparent age as a decade (\"in his late 40s\"), face shape and build (for example \"broad face, stocky build\"), skin tone. Describe what is consistently there across the photos. Do not mention clothing, tattoos, expression or background. Do not guess at ethnicity or anything not visible.",
-    'Example: "bald man in his late 40s with a dark chin goatee and light stubble, broad face with a strong jaw, stocky build, olive skin".',
+    "- descriptor: one phrase of at most 40 words, starting with the noun, covering: hair (or a bald or shaved head) and its colour, facial hair exactly as worn (style, where on the face, colour — or clean-shaven), glasses if worn in most photos, apparent age as a decade (\"in his late 40s\"), face shape and build (for example \"broad face, stocky build\"). Do not describe skin tone or complexion. Describe what is consistently there across the photos. Do not mention clothing, tattoos, expression or background. Do not guess at ethnicity or anything not visible.",
+    'Example: "bald man in his late 40s with a dark chin goatee and light stubble, broad face with a strong jaw, stocky build".',
   ].join("\n");
 }
 

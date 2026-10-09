@@ -13,7 +13,7 @@ import { alertOperator, sendOrderProblem } from "@/lib/notify";
 import { SUPPORT_EMAIL } from "@/lib/site";
 import { rebuildSlotsFromComposites } from "@/lib/repairComposites";
 import { parseModelPromptOptions } from "@/lib/modelPromptOptions";
-import { buildFluxBasePrompt, buildGeminiEditPrompt } from "@/lib/promptMapping";
+import { buildFluxBasePrompt, buildGeminiEditPrompt, buildIdentityEditPrompt } from "@/lib/promptMapping";
 import { buildIdentityProfile, IdentityProfile, parseIdentityProfile } from "@/lib/identityPrep";
 import { Database, Json } from "@/types/supabase";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
@@ -24,7 +24,7 @@ export type PipelineModel = Database["public"]["Tables"]["models"]["Row"];
 
 export type PipelineStage = "base_generation" | "final_edit" | "base_regen";
 
-export type FalPipelineWebhookStage = "trainer" | PipelineStage;
+export type FalPipelineWebhookStage = "trainer" | "identity_edit" | PipelineStage;
 
 type FalWebhookPayload = {
   request_id?: string;
@@ -625,21 +625,9 @@ export async function submitFinalEditStage(model: PipelineModel): Promise<void> 
   }
 
   const editPortraits = orderedPortraits.slice(0, targetCount);
-  const faceRefs = identityRefUrls(identity);
-  const prompt = buildGeminiEditPrompt({
-    hasJacket: Boolean(po.jacket_url?.trim()),
-    identityCount: faceRefs.length,
-    descriptor: identity?.descriptor,
-  });
-  const referenceUrls = [...editReferenceUrls(po), ...faceRefs];
-
   const requestIds = await Promise.all(
     editPortraits.map((portraitUrl, index) =>
-      submitFal(
-        env.geminiEditModel,
-        editInput(prompt, [portraitUrl, ...referenceUrls]),
-        pipelineWebhookUrl(userId, modelId, "final_edit", index)
-      )
+      submitEditForSlot(model, index, portraitUrl, identity)
     )
   );
 
@@ -681,7 +669,12 @@ function editReferenceUrls(po: ReturnType<typeof parseModelPromptOptions>): stri
   ];
 }
 
-/** Submit one Gemini edit for a single slot (rerun and base-regen paths). */
+/**
+ * Start the edit for one slot. With face references this is the first of two
+ * passes: correct the face from the customer's real photos (identity_edit),
+ * and when that returns the webhook runs the insignia pass on the corrected
+ * portrait. Without references the insignia pass runs straight away.
+ */
 export async function submitEditForSlot(
   model: PipelineModel,
   slot: number,
@@ -689,18 +682,31 @@ export async function submitEditForSlot(
   identityOverride?: IdentityProfile | null
 ): Promise<string> {
   const userId = model.user_id!;
-  const po = parseModelPromptOptions(model.prompt_options);
   const identity =
     identityOverride ?? parseIdentityProfile(asPromptJson(model.prompt_options).identity);
   const faceRefs = identityRefUrls(identity);
-  const prompt = buildGeminiEditPrompt({
-    hasJacket: Boolean(po.jacket_url?.trim()),
-    identityCount: faceRefs.length,
-    descriptor: identity?.descriptor,
-  });
+  if (faceRefs.length === 0) {
+    return submitInsigniaEditForSlot(model, slot, portraitUrl);
+  }
   return submitFal(
     env.geminiEditModel,
-    editInput(prompt, [portraitUrl, ...editReferenceUrls(po), ...faceRefs]),
+    editInput(buildIdentityEditPrompt(faceRefs.length), [portraitUrl, ...faceRefs]),
+    pipelineWebhookUrl(userId, model.id, "identity_edit", slot)
+  );
+}
+
+/** Insignia pass for one slot: badge, patch, brass (and jacket) onto the portrait; the face is left as it is. */
+export async function submitInsigniaEditForSlot(
+  model: PipelineModel,
+  slot: number,
+  portraitUrl: string
+): Promise<string> {
+  const userId = model.user_id!;
+  const po = parseModelPromptOptions(model.prompt_options);
+  const prompt = buildGeminiEditPrompt({ hasJacket: Boolean(po.jacket_url?.trim()) });
+  return submitFal(
+    env.geminiEditModel,
+    editInput(prompt, [portraitUrl, ...editReferenceUrls(po)]),
     pipelineWebhookUrl(userId, model.id, "final_edit", slot)
   );
 }
