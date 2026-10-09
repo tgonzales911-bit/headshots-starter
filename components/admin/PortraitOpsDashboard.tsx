@@ -561,6 +561,9 @@ export default function PortraitOpsDashboard({
 
   const refreshOrders = useCallback(async () => {
     setRefreshing(true);
+    // Restart any order whose start was cut off; not awaited, the list below
+    // shows it moving on the next refresh.
+    void fetch("/api/admin/ops/recover", { method: "POST" }).catch(() => undefined);
     try {
       const res = await fetch("/api/admin/ops/orders");
       const data = await res.json().catch(() => null);

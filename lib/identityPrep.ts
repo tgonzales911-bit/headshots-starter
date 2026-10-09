@@ -53,9 +53,11 @@ export type IdentityProfile = {
 const BUCKET = "training-datasets";
 const CROP_SIZE = 1024;
 const MAX_REFERENCES = 4;
+/** Time allowed for looking at the customer's photos before carrying on with what we have. */
+const ANALYSIS_BUDGET_MS = 60_000;
 
 async function geminiJson(parts: GeminiPart[]): Promise<unknown | null> {
-  const { text } = await geminiGenerateJson(parts);
+  const { text } = await geminiGenerateJson(parts, { fast: true });
   if (!text) return null;
   try {
     return JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/g, ""));
@@ -181,8 +183,15 @@ export async function buildIdentityProfile(args: {
 
   type Analysed = IdentityPhoto & { cropBuf?: Buffer };
 
-  const analysed = await mapLimit<string, Analysed>(args.selfieUrls, 4, async (source, i) => {
+  // The whole analysis has a time budget. It runs while a customer waits on
+  // the order button, and an unbounded wait here once left an order stuck
+  // with nothing started. Photos not reached in time are simply not used as
+  // references.
+  const deadline = Date.now() + ANALYSIS_BUDGET_MS;
+
+  const analysed = await mapLimit<string, Analysed>(args.selfieUrls, 8, async (source, i) => {
     const photo: Analysed = { source };
+    if (Date.now() > deadline) return photo;
     try {
       const res = await fetch(source);
       if (!res.ok) return photo;
@@ -251,7 +260,10 @@ export async function buildIdentityProfile(args: {
     const small = await sharp(p.cropBuf as Buffer).resize({ width: 768, height: 768, fit: "inside" }).jpeg({ quality: 85 }).toBuffer();
     descParts.push({ inline_data: { mime_type: "image/jpeg", data: small.toString("base64") } });
   }
-  const desc = (await geminiJson(descParts)) as Record<string, unknown> | null;
+  const desc =
+    Date.now() > deadline + 15_000
+      ? null
+      : ((await geminiJson(descParts)) as Record<string, unknown> | null);
   if (desc) {
     if (typeof desc.noun === "string" && ["man", "woman", "person"].includes(desc.noun.trim().toLowerCase())) {
       noun = desc.noun.trim().toLowerCase();

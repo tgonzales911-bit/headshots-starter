@@ -41,22 +41,42 @@ function sleep(ms: number): Promise<void> {
  * is overloaded, rate-limited, missing or erroring is skipped. Two passes
  * over the chain with a pause between them.
  */
-export async function geminiGenerateJson(parts: GeminiPart[]): Promise<GeminiResult> {
+export async function geminiGenerateJson(
+  parts: GeminiPart[],
+  opts?: {
+    /**
+     * Quick, simple question (reading one photo). Leads with the fast models
+     * instead of the judge's model, waits less per call and makes one pass,
+     * so a slow or overloaded model cannot stall an order start.
+     */
+    fast?: boolean;
+  }
+): Promise<GeminiResult> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     return { text: null, error: "GEMINI_API_KEY is not set in this deployment's environment", model: null };
   }
-  const chain = geminiModelChain();
+  const fast = opts?.fast === true;
+  const vision = process.env.GEMINI_VISION_MODEL?.trim();
+  const chain = fast
+    ? Array.from(new Set([...(vision ? [vision] : []), ...FALLBACK_MODELS]))
+    : geminiModelChain();
+  const timeoutMs = fast ? 20_000 : 90_000;
+  const passes = fast ? 1 : 2;
   let lastError = "Gemini did not answer";
 
-  for (let pass = 0; pass < 2; pass++) {
+  const startedAt = Date.now();
+  for (let pass = 0; pass < passes; pass++) {
     for (const model of chain) {
+      // A quick question gets 30 seconds in total, however many models it tries.
+      if (fast && Date.now() - startedAt > 30_000) break;
       try {
         const res = await fetch(
           `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
+            signal: AbortSignal.timeout(timeoutMs),
             body: JSON.stringify({
               contents: [{ role: "user", parts }],
               generationConfig: { temperature: 0, response_mime_type: "application/json" },
@@ -84,7 +104,7 @@ export async function geminiGenerateJson(parts: GeminiPart[]): Promise<GeminiRes
         lastError = `Gemini request failed (${model}): ${e instanceof Error ? e.message : String(e)}`;
       }
     }
-    if (pass === 0) await sleep(4000);
+    if (pass === 0 && passes > 1) await sleep(4000);
   }
   console.error("[gemini] every model failed", { lastError, chain });
   return { text: null, error: lastError, model: null };

@@ -1,5 +1,6 @@
 import { sweepStuckJudges } from "@/lib/falPipeline";
 import { runHealthCheck } from "@/lib/opsHealth";
+import { restartStaleQueuedOrders } from "@/lib/stripePostPaymentTraining";
 import { Database } from "@/types/supabase";
 import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
 import { cookies } from "next/headers";
@@ -46,8 +47,9 @@ export async function GET(request: Request) {
       return NextResponse.json({ success: false, health }, { status: 503 });
     }
 
+    const restarted = await restartStaleQueuedOrders();
     const kicked = await sweepStuckJudges();
-    return NextResponse.json({ success: true, kicked, health });
+    return NextResponse.json({ success: true, kicked, restarted, health });
   } catch (e) {
     console.error("[admin/ops/sweep]", e);
     const message = e instanceof Error ? e.message : "Internal error";

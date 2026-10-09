@@ -399,7 +399,8 @@ async function mergePipelineIndexedResult(
  */
 async function ensureIdentity(
   model: PipelineModel,
-  prev: Record<string, unknown>
+  prev: Record<string, unknown>,
+  opts?: { alreadyTried?: boolean }
 ): Promise<IdentityProfile | null> {
   const existing = parseIdentityProfile(prev.identity);
   if (existing) return existing;
@@ -408,6 +409,9 @@ async function ensureIdentity(
     (x): x is string => typeof x === "string" && x.length > 0
   );
   if (selfies.length === 0) return null;
+  if (opts?.alreadyTried) {
+    return identityFallback(model, selfies, "the photo analysis did not finish in time");
+  }
   try {
     const built = await buildIdentityProfile({
       selfieUrls: selfies,
@@ -742,13 +746,16 @@ export async function submitEditForSlot(
  * real photos (cycling through them, so the set has some variety), which is
  * re-dressed and then given its insignia.
  */
-export async function startPipelineFromPhotos(model: PipelineModel): Promise<void> {
+export async function startPipelineFromPhotos(
+  model: PipelineModel,
+  opts?: { analysisAlreadyTried?: boolean }
+): Promise<void> {
   const userId = model.user_id;
   if (!userId) return;
   const modelId = model.id;
   const supabase = adminClient();
   const prev = asPromptJson(model.prompt_options);
-  const identity = await ensureIdentity(model, prev);
+  const identity = await ensureIdentity(model, prev, { alreadyTried: opts?.analysisAlreadyTried });
   const sources = identity?.reference_urls ?? [];
   if (sources.length === 0) {
     await failModel(supabase, modelId, userId, "No usable photo of the customer's face was found.");

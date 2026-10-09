@@ -72,21 +72,56 @@ export async function startOrder(args: {
     return { ok: false, message: "Could not start the order", modelId };
   }
 
-  const model = claimed?.[0];
+  let model = claimed?.[0];
   if (!model) {
     // Not pending: either the other caller already claimed it (fine) or it
     // does not exist / belongs to someone else.
     const { data: existing } = await admin
       .from("models")
-      .select("id, status")
+      .select("*")
       .eq("id", modelId)
       .eq("user_id", userId)
       .maybeSingle();
-    if (existing) {
+    if (!existing) return { ok: false, message: "Order not found" };
+
+    // A claimed order whose start never finished (the function was cut off
+    // mid-start) would otherwise sit in "queued" for ever. After a few
+    // minutes it may be claimed again.
+    const existingPo =
+      existing.prompt_options && typeof existing.prompt_options === "object" && !Array.isArray(existing.prompt_options)
+        ? (existing.prompt_options as Record<string, unknown>)
+        : {};
+    const queuedAt = Date.parse(
+      typeof existingPo.queued_at === "string" ? existingPo.queued_at : existing.created_at
+    );
+    const stale =
+      existing.status === "queued" && Number.isFinite(queuedAt) && Date.now() - queuedAt > STALE_QUEUED_MS;
+    if (!stale) {
       console.log("[startOrder] already started", { modelId, status: existing.status });
       return { ok: true, modelId, alreadyStarted: true };
     }
-    return { ok: false, message: "Order not found" };
+    console.warn("[startOrder] restarting an order stuck in queued", { modelId });
+    model = existing;
+  }
+
+  // Stamp the claim so a stuck start can be recognised and retried later.
+  {
+    const claimedPo =
+      model.prompt_options && typeof model.prompt_options === "object" && !Array.isArray(model.prompt_options)
+        ? (model.prompt_options as Record<string, unknown>)
+        : {};
+    const stamped = {
+      ...claimedPo,
+      queued_at: new Date().toISOString(),
+      order_source: args.source,
+      payment_reference: args.paymentReference ?? claimedPo.payment_reference ?? null,
+    };
+    await admin
+      .from("models")
+      .update({ prompt_options: stamped as Json })
+      .eq("id", modelId)
+      .eq("user_id", userId);
+    model = { ...model, prompt_options: stamped as Json };
   }
 
   const po =
@@ -165,7 +200,7 @@ export async function startOrder(args: {
         .eq("user_id", userId);
       const { data: fresh } = await admin.from("models").select("*").eq("id", modelId).single();
       if (!fresh) return fail("Order could not be reloaded");
-      await startPipelineFromPhotos(fresh);
+      await startPipelineFromPhotos(fresh, { analysisAlreadyTried: true });
 
       const { error: samplesError } = await admin
         .from("samples")
@@ -243,6 +278,40 @@ export async function startOrder(args: {
   } catch (e) {
     return fail("Order start failed", e instanceof Error ? e.message : String(e));
   }
+}
+
+/** How long an order may sit in "queued" before its start is treated as lost. */
+const STALE_QUEUED_MS = 6 * 60 * 1000;
+
+/**
+ * Restart orders whose start was cut off. Called by the scheduled sweep and
+ * when the operator refreshes the dashboard.
+ */
+export async function restartStaleQueuedOrders(): Promise<number[]> {
+  const admin = adminClient();
+  const { data } = await admin
+    .from("models")
+    .select("id, user_id, created_at, prompt_options")
+    .eq("status", "queued")
+    .limit(20);
+  const restarted: number[] = [];
+  for (const row of data ?? []) {
+    if (!row.user_id) continue;
+    const rowPo =
+      row.prompt_options && typeof row.prompt_options === "object" && !Array.isArray(row.prompt_options)
+        ? (row.prompt_options as Record<string, unknown>)
+        : {};
+    const queuedAt = Date.parse(typeof rowPo.queued_at === "string" ? rowPo.queued_at : row.created_at);
+    if (!Number.isFinite(queuedAt) || Date.now() - queuedAt <= STALE_QUEUED_MS) continue;
+    const result = await startOrder({
+      modelId: row.id,
+      userId: row.user_id,
+      source: rowPo.order_source === "comp" ? "comp" : "stripe",
+      paymentReference: typeof rowPo.payment_reference === "string" ? rowPo.payment_reference : null,
+    });
+    if (result.ok && !result.alreadyStarted) restarted.push(row.id);
+  }
+  return restarted;
 }
 
 /** After Stripe checkout succeeds: start the order named in the session metadata. */
