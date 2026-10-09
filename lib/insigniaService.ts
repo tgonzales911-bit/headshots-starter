@@ -7,6 +7,7 @@ import {
   InsigniaKind,
   PlacementReport,
   PreparedCutout,
+  guessInsigniaBoxes,
   placeInsignia,
   prepareCutout,
 } from "@/lib/insigniaPlacement";
@@ -228,12 +229,32 @@ export async function applyRealInsignia(args: {
   patchUrl?: string;
 }): Promise<{ image: Buffer; reports: PlacementReport[] }> {
   if (!insigniaPlacementEnabled()) return { image: args.subject, reports: [] };
-  const [boxes, badge, patch] = await Promise.all([
-    locateInsignia(args.subject),
+  const [guessed, badge, patch] = await Promise.all([
+    guessInsigniaBoxes(args.subject),
     loadCutout(args.stored.badge, args.badgeUrl),
     loadCutout(args.stored.patch, args.patchUrl),
   ]);
-  const result = await placeInsignia({ image: args.subject, boxes, cutouts: { badge, patch } });
+  const cutouts = { badge, patch };
+
+  // First from the image alone. This needs no outside service, so it keeps
+  // working when the vision model is over quota or down.
+  let result = await placeInsignia({ image: args.subject, boxes: guessed, cutouts });
+
+  // Only what that missed is worth a vision-model call.
+  const missed = result.reports.filter((r) => !r.placed && cutouts[r.kind]).map((r) => r.kind);
+  if (missed.length > 0) {
+    const located = await locateInsignia(args.subject).catch(() => ({} as Partial<Record<InsigniaKind, Box | null>>));
+    const retryBoxes: Partial<Record<InsigniaKind, Box | null>> = {};
+    for (const kind of missed) if (located[kind]) retryBoxes[kind] = located[kind];
+    if (Object.keys(retryBoxes).length > 0) {
+      const second = await placeInsignia({ image: result.image, boxes: retryBoxes, cutouts });
+      const byKind = new Map(second.reports.map((r) => [r.kind, r]));
+      result = {
+        image: second.image,
+        reports: result.reports.map((r) => (r.placed ? r : byKind.get(r.kind)?.placed ? byKind.get(r.kind)! : r)),
+      };
+    }
+  }
   if (!result.reports.some((r) => r.placed)) return { image: args.subject, reports: result.reports };
   return result;
 }

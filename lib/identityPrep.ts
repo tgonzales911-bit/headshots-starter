@@ -172,6 +172,32 @@ export function parseIdentityProfile(raw: unknown): IdentityProfile | null {
  * learned (no Gemini key, or every call failed) so callers fall back to the
  * plain behaviour.
  */
+function batchInstructions(count: number): string {
+  return [
+    `These ${count} photos (labelled PHOTO 0 to PHOTO ${count - 1}) are all of the same customer, who uploaded them so a formal portrait can be made of them.`,
+    "Return ONLY JSON shaped:",
+    '{"noun":"man","descriptor":"...","photos":[{"index":0,"face_box":[ymin,xmin,ymax,xmax],"caption":"...","quality":7,"frontal":true}]}',
+    "with exactly one entry in photos for every photo, in order.",
+    '- noun: "man", "woman" or "person".',
+    "- descriptor: one phrase of at most 40 words, starting with the noun, covering what is consistently there across the photos: hair (or a bald or shaved head) and its colour, facial hair exactly as worn (style, where on the face, colour, or clean-shaven), glasses if worn in most photos, apparent age as a decade, face shape and build. Do not describe skin tone, clothing, tattoos, expression or background, and do not guess at ethnicity.",
+    "For each photo:",
+    "- face_box: the box around the main person's face, from the top of the forehead (or hairline) to the bottom of the chin and ear to ear, as integers 0-1000 normalised to that photo's height and width. Use null if no face is clearly visible.",
+    "- caption: one plain sentence describing ONLY what is incidental: what they are wearing, the camera angle and distance, their expression, the lighting and the background. Refer to the person as [SUBJECT].",
+    "- quality: integer 1-10 for how good this photo is as the starting point for a formal portrait of this person: sharp focus, even light on the face, eyes open and looking at the camera, head level and upright, neutral or lightly smiling expression, and taken from far enough that the face is not distorted. Score an arm's-length selfie from below, a tilted or turned head, a dim photo or a squint at 5 or lower.",
+    "- frontal: true only if the face is turned no more than about 20 degrees from the camera and the head is not tilted.",
+  ].join("\n");
+}
+
+/**
+ * Analyse the customer's selfies. Returns null when nothing useful could be
+ * learned (no Gemini key, or the call failed) so callers fall back to the
+ * plain behaviour.
+ *
+ * One vision call covers every photo. The first version asked one question
+ * per photo; an order of eighteen photos then cost nineteen requests and a
+ * few orders used up the day's quota, which silently switched off photo
+ * selection, insignia placement and the quality check together.
+ */
 export async function buildIdentityProfile(args: {
   selfieUrls: string[];
   userId: string;
@@ -181,34 +207,45 @@ export async function buildIdentityProfile(args: {
   const supabase = admin();
   const stamp = Date.now();
 
-  type Analysed = IdentityPhoto & { cropBuf?: Buffer };
-
-  // The whole analysis has a time budget. It runs while a customer waits on
-  // the order button, and an unbounded wait here once left an order stuck
-  // with nothing started. Photos not reached in time are simply not used as
-  // references.
-  const deadline = Date.now() + ANALYSIS_BUDGET_MS;
-
-  const analysed = await mapLimit<string, Analysed>(args.selfieUrls, 8, async (source, i) => {
-    const photo: Analysed = { source };
-    if (Date.now() > deadline) return photo;
+  type Loaded = { source: string; upright: Buffer; w: number; h: number; small: Buffer } | null;
+  const loaded = await mapLimit<string, Loaded>(args.selfieUrls, 8, async (source) => {
     try {
-      const res = await fetch(source);
-      if (!res.ok) return photo;
+      const res = await fetch(source, { signal: AbortSignal.timeout(30_000) });
+      if (!res.ok) return null;
       // Bake in the phone's rotation so box coordinates and pixels agree.
       const upright = await sharp(Buffer.from(await res.arrayBuffer())).rotate().jpeg({ quality: 92 }).toBuffer();
       const meta = await sharp(upright).metadata();
       const w = meta.width ?? 0;
       const h = meta.height ?? 0;
-      if (!w || !h) return photo;
+      if (!w || !h) return null;
+      const small = await sharp(upright).resize({ width: 640, height: 640, fit: "inside" }).jpeg({ quality: 82 }).toBuffer();
+      return { source, upright, w, h, small };
+    } catch {
+      return null;
+    }
+  });
+  const usable = loaded.filter((l): l is NonNullable<Loaded> => l !== null);
+  if (usable.length === 0) return null;
 
-      const small = await sharp(upright).resize({ width: 1024, height: 1024, fit: "inside" }).jpeg({ quality: 85 }).toBuffer();
-      const json = (await geminiJson([
-        { text: photoInstructions() },
-        { inline_data: { mime_type: "image/jpeg", data: small.toString("base64") } },
-      ])) as Record<string, unknown> | null;
-      if (!json) return photo;
+  const parts: GeminiPart[] = [{ text: batchInstructions(usable.length) }];
+  usable.forEach((l, i) => {
+    parts.push({ text: `PHOTO ${i}:` }, { inline_data: { mime_type: "image/jpeg", data: l.small.toString("base64") } });
+  });
+  const answer = (await geminiJson(parts)) as Record<string, unknown> | null;
+  if (!answer || !Array.isArray(answer.photos)) return null;
 
+  type Analysed = IdentityPhoto & { cropBuf?: Buffer };
+  const byIndex = new Map<number, Record<string, unknown>>();
+  for (const p of answer.photos as Array<Record<string, unknown>>) {
+    const idx = Number(p?.index);
+    if (Number.isInteger(idx)) byIndex.set(idx, p);
+  }
+
+  const analysed = await mapLimit(usable, 6, async (l, i): Promise<Analysed> => {
+    const photo: Analysed = { source: l.source };
+    const json = byIndex.get(i);
+    if (!json) return photo;
+    try {
       if (typeof json.caption === "string" && json.caption.trim()) {
         photo.caption = json.caption.trim().slice(0, 300);
       }
@@ -220,8 +257,8 @@ export async function buildIdentityProfile(args: {
       if (!box) return photo;
       photo.face_area = ((box[2] - box[0]) / 1000) * ((box[3] - box[1]) / 1000);
 
-      const crop = headAndShouldersCrop(box, w, h);
-      const cropBuf = await sharp(upright)
+      const crop = headAndShouldersCrop(box, l.w, l.h);
+      const cropBuf = await sharp(l.upright)
         .extract(crop)
         .resize({ width: CROP_SIZE, height: CROP_SIZE, fit: "inside", withoutEnlargement: true })
         .jpeg({ quality: 93, chromaSubsampling: "4:4:4" })
@@ -236,7 +273,7 @@ export async function buildIdentityProfile(args: {
         photo.face_url = supabase.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
       }
     } catch (e) {
-      console.error("[identityPrep] photo failed (using it whole)", { i, e });
+      console.error("[identityPrep] photo failed (not used as a reference)", { i, e });
     }
     return photo;
   });
@@ -244,41 +281,27 @@ export async function buildIdentityProfile(args: {
   const withFace = analysed.filter((p) => p.face_url && p.cropBuf);
   if (withFace.length === 0) return null;
 
-  // Identity references: frontal first, then by quality.
+  // Portrait sources: frontal first, then by quality.
   const ranked = [...withFace].sort((a, b) => {
     const fa = a.frontal ? 1 : 0;
     const fb = b.frontal ? 1 : 0;
     if (fa !== fb) return fb - fa;
     return (b.quality ?? 0) - (a.quality ?? 0);
   });
-  const references = ranked.slice(0, MAX_REFERENCES);
 
-  let noun = "person";
-  let descriptor = "";
-  const descParts: GeminiPart[] = [{ text: descriptorInstructions(Math.min(6, ranked.length)) }];
-  for (const p of ranked.slice(0, 6)) {
-    const small = await sharp(p.cropBuf as Buffer).resize({ width: 768, height: 768, fit: "inside" }).jpeg({ quality: 85 }).toBuffer();
-    descParts.push({ inline_data: { mime_type: "image/jpeg", data: small.toString("base64") } });
-  }
-  const desc =
-    Date.now() > deadline + 15_000
-      ? null
-      : ((await geminiJson(descParts)) as Record<string, unknown> | null);
-  if (desc) {
-    if (typeof desc.noun === "string" && ["man", "woman", "person"].includes(desc.noun.trim().toLowerCase())) {
-      noun = desc.noun.trim().toLowerCase();
-    }
-    if (typeof desc.descriptor === "string") {
-      descriptor = desc.descriptor.replace(/\s+/g, " ").trim().replace(/[.]+$/, "").slice(0, 320);
-    }
-  }
+  const nounRaw = typeof answer.noun === "string" ? answer.noun.trim().toLowerCase() : "";
+  const noun = ["man", "woman", "person"].includes(nounRaw) ? nounRaw : "person";
+  const descriptor =
+    typeof answer.descriptor === "string"
+      ? answer.descriptor.replace(/\s+/g, " ").trim().replace(/[.]+$/, "").slice(0, 320)
+      : "";
 
   return {
     version: 1,
     noun,
     descriptor,
     photos: analysed.map(({ cropBuf: _drop, ...rest }) => rest),
-    reference_urls: references.map((p) => p.face_url as string),
+    reference_urls: ranked.slice(0, MAX_REFERENCES).map((p) => p.face_url as string),
   };
 }
 

@@ -1,3 +1,4 @@
+import sharp from "sharp";
 import { PARALLEL_IMAGE_COUNT } from "@/lib/constants";
 import {
   JUDGE_THRESHOLD,
@@ -200,7 +201,9 @@ function pipelineWebhookUrl(
   modelId: number,
   stage: FalPipelineWebhookStage,
   index?: number,
-  attempt?: number
+  attempt?: number,
+  /** The image this job was asked to edit, so its result can be checked against it. */
+  source?: string
 ): string {
   const url = new URL(`${baseUrl()}/api/fal/pipeline-webhook`);
   url.searchParams.set("user_id", userId);
@@ -212,6 +215,9 @@ function pipelineWebhookUrl(
   }
   if (typeof attempt === "number" && attempt > 0) {
     url.searchParams.set("try", String(attempt));
+  }
+  if (source) {
+    url.searchParams.set("src", source);
   }
   return url.toString();
 }
@@ -449,6 +455,39 @@ async function ensureIdentity(
 }
 
 /**
+ * Choose three photos with no vision model to ask: the sharpest ones that
+ * are neither dim nor blown out. It cannot tell a turned head from a level
+ * one, but it does keep out the dark and blurry frames.
+ */
+async function pickPhotosWithoutVision(selfies: string[]): Promise<string[]> {
+  const scored = await Promise.all(
+    selfies.map(async (url) => {
+      try {
+        const res = await fetch(url, { signal: AbortSignal.timeout(20_000) });
+        if (!res.ok) return { url, score: 0 };
+        const grey = sharp(Buffer.from(await res.arrayBuffer()))
+          .rotate()
+          .resize(256, 256, { fit: "inside" })
+          .greyscale();
+        const brightness = (await grey.clone().stats()).channels[0].mean;
+        const edges = await grey
+          .clone()
+          .convolve({ width: 3, height: 3, kernel: [0, 1, 0, 1, -4, 1, 0, 1, 0], scale: 1, offset: 128 })
+          .stats();
+        const sharpness = edges.channels[0].stdev;
+        // Full marks between 95 and 175; falls away outside that.
+        const exposure = brightness < 95 ? brightness / 95 : brightness > 175 ? Math.max(0.3, 1 - (brightness - 175) / 80) : 1;
+        return { url, score: sharpness * exposure * exposure };
+      } catch {
+        return { url, score: 0 };
+      }
+    })
+  );
+  const best = scored.sort((a, b) => b.score - a.score).slice(0, 3).map((x) => x.url);
+  return best.length > 0 ? best : selfies.slice(0, 3);
+}
+
+/**
  * When the photo analysis is unavailable the edit still gets real photos of
  * the customer: three of their selfies as uploaded, spread across the set.
  * Not saved, so the next run tries the full analysis again. Logged, because a
@@ -459,10 +498,7 @@ async function identityFallback(
   selfies: string[],
   reason: string
 ): Promise<IdentityProfile> {
-  const n = selfies.length;
-  const picks = Array.from(new Set([Math.floor(n * 0.6), Math.floor(n * 0.75), Math.floor(n * 0.1)]))
-    .map((i) => selfies[Math.min(n - 1, i)])
-    .filter(Boolean);
+  const picks = await pickPhotosWithoutVision(selfies);
   if (model.user_id) {
     await logEvent(adminClient(), {
       userId: model.user_id,
@@ -473,6 +509,16 @@ async function identityFallback(
       payload: { reference_urls: picks },
     });
   }
+  await alertOperator({
+    subject: `Order #${model.id}: photos were chosen without the quality check`,
+    lines: [
+      `Reason: ${reason.slice(0, 200)}`,
+      "The vision model that picks the customer's best photos did not answer, so three photos were taken blind. Portraits may start from a dim, tilted or turned photo.",
+      "If the results look off, use \"New base for all\" on this order once the vision model is answering again; that re-runs the photo check.",
+      "If this keeps happening, check the Gemini API key's quota and billing in Google AI Studio.",
+    ],
+    modelId: model.id,
+  });
   return { version: 1, noun: "person", descriptor: "", photos: [], reference_urls: picks };
 }
 
@@ -814,7 +860,8 @@ export async function startPipelineFromPhotos(
 export async function submitInsigniaEditForSlot(
   model: PipelineModel,
   slot: number,
-  portraitUrl: string
+  portraitUrl: string,
+  attempt = 0
 ): Promise<string> {
   const userId = model.user_id!;
   const po = parseModelPromptOptions(model.prompt_options);
@@ -822,7 +869,7 @@ export async function submitInsigniaEditForSlot(
   return submitFal(
     env.geminiEditModel,
     editInput(prompt, [portraitUrl, ...editReferenceUrls(po)]),
-    pipelineWebhookUrl(userId, model.id, "final_edit", slot)
+    pipelineWebhookUrl(userId, model.id, "final_edit", slot, attempt, portraitUrl)
   );
 }
 
@@ -1040,7 +1087,9 @@ export async function resubmitBaseGenForSlots(
     const results = Array.isArray(prev.final_edit_results) ? [...prev.final_edit_results] : [];
     for (const i of indices) {
       const at = sources.indexOf(portraits[i]);
-      portraits[i] = sources[(at + 1) % sources.length];
+      // A slot whose photo is not among the current best (the first pick was
+      // made blind, say) simply takes its turn in the list.
+      portraits[i] = at < 0 ? sources[i % sources.length] : sources[(at + 1) % sources.length];
       results[i] = "";
     }
     const nextPo = { ...prev, edit_portrait_urls: portraits, final_edit_results: results };

@@ -61,15 +61,15 @@ export async function geminiGenerateJson(
   const chain = fast
     ? Array.from(new Set([...(vision ? [vision] : []), ...FALLBACK_MODELS]))
     : geminiModelChain();
-  const timeoutMs = fast ? 20_000 : 90_000;
+  const timeoutMs = fast ? 40_000 : 90_000;
   const passes = fast ? 1 : 2;
   let lastError = "Gemini did not answer";
 
   const startedAt = Date.now();
   for (let pass = 0; pass < passes; pass++) {
     for (const model of chain) {
-      // A quick question gets 30 seconds in total, however many models it tries.
-      if (fast && Date.now() - startedAt > 30_000) break;
+      // A quick question gets 75 seconds in total, however many models it tries.
+      if (fast && Date.now() - startedAt > 75_000) break;
       try {
         const res = await fetch(
           `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,

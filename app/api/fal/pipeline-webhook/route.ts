@@ -11,6 +11,7 @@ import {
   type OrchestratorContext,
 } from "@/lib/falPipeline";
 import { parseStoredCutouts } from "@/lib/insigniaService";
+import { compositionSimilarity, REDRAW_THRESHOLD } from "@/lib/redrawGuard";
 import { alertOperator } from "@/lib/notify";
 import type { Database, Json } from "@/types/supabase";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
@@ -557,6 +558,51 @@ export async function POST(request: Request) {
         { modelId, index }
       );
       return NextResponse.json({ ok: true }, { status: 200 });
+    }
+
+    // Redraw check: the insignia edit must keep the portrait it was given.
+    // If the middle of the frame no longer matches, the model drew a new
+    // picture (usually a different person) and the edit is run again.
+    const sourceUrl = url.searchParams.get("src");
+    const insigniaAttempt = Number(url.searchParams.get("try") ?? "0") || 0;
+    if (sourceUrl) {
+      try {
+        const [beforeRes, afterRes] = await Promise.all([fetch(sourceUrl), fetch(imageUrl)]);
+        if (beforeRes.ok && afterRes.ok) {
+          const similarity = await compositionSimilarity(
+            Buffer.from(await beforeRes.arrayBuffer()),
+            Buffer.from(await afterRes.arrayBuffer())
+          );
+          if (similarity < REDRAW_THRESHOLD && insigniaAttempt < 2) {
+            const { data: forRetry } = await supabase.from("models").select("*").eq("id", modelId).single();
+            if (forRetry) {
+              await insertPipelineEvent(supabase, {
+                userId,
+                modelId,
+                stage: "final_edit",
+                eventType: "redraw_rejected",
+                message: `Insignia edit for image ${index + 1} redrew the portrait instead of editing it (match ${similarity.toFixed(2)}) — running it again (retry ${insigniaAttempt + 1} of 2)`,
+                requestId: body.request_id ?? null,
+                payload: { index, similarity, attempt: insigniaAttempt },
+              });
+              await submitInsigniaEditForSlot(forRetry, index, sourceUrl, insigniaAttempt + 1);
+              return NextResponse.json({ ok: true }, { status: 200 });
+            }
+          } else if (similarity < REDRAW_THRESHOLD) {
+            await insertPipelineEvent(supabase, {
+              userId,
+              modelId,
+              stage: "final_edit",
+              eventType: "redraw_kept",
+              message: `Insignia edit for image ${index + 1} still does not match its portrait after 2 retries (match ${similarity.toFixed(2)}) — check this image by eye`,
+              requestId: body.request_id ?? null,
+              payload: { index, similarity },
+            });
+          }
+        }
+      } catch (e) {
+        console.error("[pipeline-webhook] redraw check failed (continuing)", { modelId, index, e });
+      }
     }
 
     // Duplicate-webhook dedup: fal occasionally delivers the same result twice.

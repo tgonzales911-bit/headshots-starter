@@ -586,6 +586,89 @@ async function placeOne(
 }
 
 /**
+ * Find the drawn badge and patch from the image alone, without asking a
+ * vision model: in a chest-up portrait they are the two large patches of
+ * colour on the dark jacket below the collar. Buttons and collar pins are
+ * too small; the shirt, tie and sleeve stripes run off the search band.
+ */
+export async function guessInsigniaBoxes(image: Buffer): Promise<Partial<Record<InsigniaKind, Box | null>>> {
+  const base = sharp(image).ensureAlpha();
+  const meta = await base.metadata();
+  const W = meta.width ?? 0;
+  const H = meta.height ?? 0;
+  if (!W || !H) return {};
+  const k = Math.min(1, 480 / Math.max(W, H));
+  const w = Math.max(1, Math.round(W * k));
+  const h = Math.max(1, Math.round(H * k));
+  const small = await base.resize(w, h, { fit: "fill" }).raw().toBuffer();
+
+  const top = Math.round(h * 0.4);
+  const bottom = Math.round(h * 0.985);
+  const band = Buffer.alloc(w * h * 4);
+  for (let y = top; y < bottom; y++) small.copy(band, y * w * 4, y * w * 4, (y + 1) * w * 4);
+  const dark = darkLevel(band, w * h);
+
+  const bright = new Uint8Array(w * h);
+  for (let y = top; y < bottom; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (small[i * 4 + 3] < 200) continue;
+      const r = small[i * 4];
+      const g = small[i * 4 + 1];
+      const b = small[i * 4 + 2];
+      if (chroma(r, g, b) > 60 || luma(r, g, b) > Math.max(dark + 95, 150)) bright[i] = 1;
+    }
+  }
+  const joined = dilate({ data: bright, w, h }, Math.max(1, Math.round(w * 0.012)));
+
+  const candidates: Array<{ box: Box; area: number }> = [];
+  const seen = new Uint8Array(w * h);
+  for (let start = 0; start < w * h; start++) {
+    if (!joined.data[start] || seen[start]) continue;
+    const stack = [start];
+    seen[start] = 1;
+    let x0 = w,
+      y0 = h,
+      x1 = 0,
+      y1 = 0,
+      area = 0;
+    while (stack.length) {
+      const i = stack.pop() as number;
+      area++;
+      const x = i % w;
+      const y = (i - x) / w;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+      if (x > 0 && joined.data[i - 1] && !seen[i - 1]) (seen[i - 1] = 1), stack.push(i - 1);
+      if (x < w - 1 && joined.data[i + 1] && !seen[i + 1]) (seen[i + 1] = 1), stack.push(i + 1);
+      if (y > 0 && joined.data[i - w] && !seen[i - w]) (seen[i - w] = 1), stack.push(i - w);
+      if (y < h - 1 && joined.data[i + w] && !seen[i + w]) (seen[i + w] = 1), stack.push(i + w);
+    }
+    // Runs off the band (shirt, tie, stripes, backdrop) or off the frame.
+    if (y0 <= top + 1 || y1 >= bottom - 2 || x0 <= 1 || x1 >= w - 2) continue;
+    const frac = area / (w * h);
+    if (frac < 0.0035 || frac > 0.07) continue;
+    const bw = x1 - x0 + 1;
+    const bh = y1 - y0 + 1;
+    if (bw / bh > 1.6 || bh / bw > 3.2) continue;
+    candidates.push({ box: { x: x0, y: y0, w: bw, h: bh }, area });
+  }
+
+  const centre = (b: Box) => (b.x + b.w / 2) / w;
+  const pick = (ok: (c: number) => boolean) =>
+    candidates.filter((c) => ok(centre(c.box))).sort((a, b) => b.area - a.area)[0]?.box ?? null;
+  const scaleUp = (b: Box | null): Box | null =>
+    b ? { x: b.x / k, y: b.y / k, w: b.w / k, h: b.h / k } : null;
+
+  return {
+    badge: scaleUp(pick((c) => c > 0.3 && c < 0.78)),
+    patch: scaleUp(pick((c) => c <= 0.22 || c >= 0.8)),
+  };
+}
+
+/**
  * Place the real insignia on a portrait.
  * `image` is the portrait (RGBA; transparent outside the person is fine and
  * preferred, so nothing behind them is mistaken for insignia).
