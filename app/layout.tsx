@@ -54,6 +54,11 @@ const description =
   "Class A dress-uniform portraits for the fire service, made with photos of your own badge, shoulder patch and collar brass. Checked by a person before delivery.";
 
 // Pinch-zoom stays enabled: no maximumScale.
+// Every page reads the signed-in session (the header does), so nothing here
+// can be prerendered at build time. Without this, a build with no Supabase
+// settings (a Vercel preview, for example) fails on the 404 page.
+export const dynamic = "force-dynamic";
+
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
