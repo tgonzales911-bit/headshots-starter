@@ -14,6 +14,7 @@ import { SUPPORT_EMAIL } from "@/lib/site";
 import { rebuildSlotsFromComposites } from "@/lib/repairComposites";
 import { parseModelPromptOptions } from "@/lib/modelPromptOptions";
 import { buildFluxBasePrompt, buildGeminiEditPrompt } from "@/lib/promptMapping";
+import { buildIdentityProfile, IdentityProfile, parseIdentityProfile } from "@/lib/identityPrep";
 import { Database, Json } from "@/types/supabase";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { Resend } from "resend";
@@ -77,6 +78,34 @@ const editCandidates = Math.min(
 // size for the same per-image price. "4K" doubles the edit cost.
 const editResolution = (process.env.FAL_EDIT_RESOLUTION?.trim() || "2K").toUpperCase();
 const editAspectRatio = process.env.FAL_EDIT_ASPECT_RATIO?.trim() || "3:4";
+
+// Real photos of the customer's face handed to the edit model as identity
+// references (after the insignia references). 0 turns this off and the edit
+// keeps the generated face untouched, as it did originally.
+const editIdentityRefs = (() => {
+  const raw = process.env.FAL_EDIT_IDENTITY_REFS?.trim();
+  if (raw === undefined || raw === "") return 3;
+  const n = Number(raw);
+  return Number.isFinite(n) ? Math.max(0, Math.min(4, Math.floor(n))) : 3;
+})();
+
+/** Opening of the base prompt: the trigger word, with the class noun it was captioned with. */
+function basePromptLead(trigger: string, identity: IdentityProfile | null): string {
+  return identity ? `photo of ${trigger} ${identity.noun}` : trigger;
+}
+
+function identityRefUrls(identity: IdentityProfile | null): string[] {
+  return identity ? identity.reference_urls.slice(0, editIdentityRefs) : [];
+}
+
+/** Photos used as ground truth by the ranking and QC judges: face crops when we have them. */
+function judgeReferenceUrls(prev: Record<string, unknown>): string[] {
+  const identity = parseIdentityProfile(prev.identity);
+  if (identity && identity.reference_urls.length > 0) return identity.reference_urls.slice(0, 4);
+  return (Array.isArray(prev.selfie_urls) ? prev.selfie_urls : [])
+    .filter((x): x is string => typeof x === "string" && x.length > 0)
+    .slice(0, 4);
+}
 
 /** Shared input for every insignia edit call. */
 function editInput(prompt: string, imageUrls: string[]): Record<string, unknown> {
@@ -332,6 +361,57 @@ async function mergePipelineIndexedResult(
 }
 
 /**
+ * Identity profile for an order, building it on demand for orders started
+ * before identity analysis existed (so their re-edits benefit too). `prev` is
+ * updated in place so a caller's later `{ ...prev }` write keeps it.
+ */
+async function ensureIdentity(
+  model: PipelineModel,
+  prev: Record<string, unknown>
+): Promise<IdentityProfile | null> {
+  const existing = parseIdentityProfile(prev.identity);
+  if (existing) return existing;
+  if (!model.user_id) return null;
+  const selfies = (Array.isArray(prev.selfie_urls) ? prev.selfie_urls : []).filter(
+    (x): x is string => typeof x === "string" && x.length > 0
+  );
+  if (selfies.length === 0) return null;
+  try {
+    const built = await buildIdentityProfile({
+      selfieUrls: selfies,
+      userId: model.user_id,
+      modelId: model.id,
+    });
+    if (!built) return null;
+    prev.identity = built as unknown as Record<string, unknown>;
+    const supabase = adminClient();
+    const { data: fresh } = await supabase
+      .from("models")
+      .select("prompt_options")
+      .eq("id", model.id)
+      .maybeSingle();
+    await supabase
+      .from("models")
+      .update({
+        prompt_options: { ...asPromptJson(fresh?.prompt_options), identity: built } as unknown as Json,
+      })
+      .eq("id", model.id);
+    await logEvent(supabase, {
+      userId: model.user_id,
+      modelId: model.id,
+      stage: "identity",
+      eventType: "completed",
+      message: `Identity analysed: ${built.descriptor || "no description"} (${built.reference_urls.length} reference crops)`,
+      payload: { descriptor: built.descriptor, reference_urls: built.reference_urls },
+    });
+    return built;
+  } catch (e) {
+    console.error("[falPipeline] ensureIdentity failed (continuing without it)", { modelId: model.id, e });
+    return null;
+  }
+}
+
+/**
  * STAGE 2 — Flux LoRA base generation (4 portraits, blank uniform).
  * Expects `model.lora_url` (or `weights_url`) set. Persists `prompt_options.base_request_ids`.
  */
@@ -353,15 +433,17 @@ export async function submitBaseGeneration(model: PipelineModel): Promise<void> 
   const supabase = adminClient();
 
   const prevPo = asPromptJson(model.prompt_options);
+  const baseIdentity = parseIdentityProfile(prevPo.identity);
   const triggerPhrase =
     process.env.FAL_TRIGGER_PHRASE?.trim() || buildTriggerPhrase(userId, modelId);
   const envTemplate = process.env.FAL_ASSISTANT_CHIEF_PROMPT_TEMPLATE?.trim();
   const fluxPrompt = envTemplate
     ? envTemplate.replace(/\[TRIGGER_PHRASE\]/g, triggerPhrase)
-    : `${triggerPhrase}, ${buildFluxBasePrompt({
+    : `${basePromptLead(triggerPhrase, baseIdentity)}, ${buildFluxBasePrompt({
         department:
           typeof prevPo.department === "string" ? prevPo.department : null,
         rank: typeof prevPo.rank === "string" ? prevPo.rank : null,
+        descriptor: baseIdentity?.descriptor,
       })}`;
 
   // Candidate pool: the endpoint caps num_images at 4 per call, so N
@@ -465,9 +547,8 @@ export async function submitFinalEditStage(model: PipelineModel): Promise<void> 
 
   // Ranked selection: comparative identity judge over the candidate pool.
   // Fail-open: keep pool order if ranking is unavailable.
-  const selfieUrls = (Array.isArray(prev.selfie_urls) ? prev.selfie_urls : [])
-    .filter((s): s is string => typeof s === "string" && s.length > 0)
-    .slice(0, 4);
+  const identity = await ensureIdentity(model, prev);
+  const selfieUrls = judgeReferenceUrls(prev);
 
   const targetCount = Math.min(
     typeof prev.edit_count === "number" && prev.edit_count >= PARALLEL
@@ -516,8 +597,13 @@ export async function submitFinalEditStage(model: PipelineModel): Promise<void> 
   }
 
   const editPortraits = orderedPortraits.slice(0, targetCount);
-  const prompt = buildGeminiEditPrompt({ hasJacket: Boolean(po.jacket_url?.trim()) });
-  const referenceUrls = editReferenceUrls(po);
+  const faceRefs = identityRefUrls(identity);
+  const prompt = buildGeminiEditPrompt({
+    hasJacket: Boolean(po.jacket_url?.trim()),
+    identityCount: faceRefs.length,
+    descriptor: identity?.descriptor,
+  });
+  const referenceUrls = [...editReferenceUrls(po), ...faceRefs];
 
   const requestIds = await Promise.all(
     editPortraits.map((portraitUrl, index) =>
@@ -571,14 +657,22 @@ function editReferenceUrls(po: ReturnType<typeof parseModelPromptOptions>): stri
 export async function submitEditForSlot(
   model: PipelineModel,
   slot: number,
-  portraitUrl: string
+  portraitUrl: string,
+  identityOverride?: IdentityProfile | null
 ): Promise<string> {
   const userId = model.user_id!;
   const po = parseModelPromptOptions(model.prompt_options);
-  const prompt = buildGeminiEditPrompt({ hasJacket: Boolean(po.jacket_url?.trim()) });
+  const identity =
+    identityOverride ?? parseIdentityProfile(asPromptJson(model.prompt_options).identity);
+  const faceRefs = identityRefUrls(identity);
+  const prompt = buildGeminiEditPrompt({
+    hasJacket: Boolean(po.jacket_url?.trim()),
+    identityCount: faceRefs.length,
+    descriptor: identity?.descriptor,
+  });
   return submitFal(
     env.geminiEditModel,
-    editInput(prompt, [portraitUrl, ...editReferenceUrls(po)]),
+    editInput(prompt, [portraitUrl, ...editReferenceUrls(po), ...faceRefs]),
     pipelineWebhookUrl(userId, model.id, "final_edit", slot)
   );
 }
@@ -601,9 +695,7 @@ export async function judgeAndAwaitSelection(model: PipelineModel, finalUrls: st
   const prev = asPromptJson(model.prompt_options);
   const po = parseModelPromptOptions(model.prompt_options);
 
-  const selfieUrls = (Array.isArray(prev.selfie_urls) ? prev.selfie_urls : [])
-    .filter((s): s is string => typeof s === "string" && s.length > 0)
-    .slice(0, 4);
+  const selfieUrls = judgeReferenceUrls(prev);
 
   const { scores, error: judgeError } = await runJudgeWithRetry({
     outputUrls: finalUrls,
@@ -709,6 +801,9 @@ export async function resubmitFinalEditForIndices(
     return;
   }
 
+  // Orders started before identity analysis get their face references now.
+  const identity = await ensureIdentity(model, prev);
+
   // Clear targeted slots BEFORE resubmitting so the merge RPC's filled_count
   // drops and completion only fires after every re-edit lands.
   const currentResults = Array.isArray(prev.final_edit_results)
@@ -729,7 +824,7 @@ export async function resubmitFinalEditForIndices(
     .eq("user_id", userId);
 
   const requestIds = await Promise.all(
-    valid.map((index) => submitEditForSlot(model, index, portraitFor(index)))
+    valid.map((index) => submitEditForSlot(model, index, portraitFor(index), identity))
   );
 
   await logEvent(supabase, {
@@ -761,14 +856,19 @@ export async function resubmitBaseGenForSlots(
     return;
   }
 
+  // Older orders get their identity profile here, so the fresh portrait is
+  // prompted with the person's appearance and its edit gets face references.
+  const regenIdentity = await ensureIdentity(model, prev);
+
   const triggerPhrase =
     process.env.FAL_TRIGGER_PHRASE?.trim() || buildTriggerPhrase(userId, modelId);
   const envTemplate = process.env.FAL_ASSISTANT_CHIEF_PROMPT_TEMPLATE?.trim();
   const fluxPrompt = envTemplate
     ? envTemplate.replace(/\[TRIGGER_PHRASE\]/g, triggerPhrase)
-    : `${triggerPhrase}, ${buildFluxBasePrompt({
+    : `${basePromptLead(triggerPhrase, regenIdentity)}, ${buildFluxBasePrompt({
         department: typeof prev.department === "string" ? prev.department : null,
         rank: typeof prev.rank === "string" ? prev.rank : null,
+        descriptor: regenIdentity?.descriptor,
       })}`;
 
   const currentResults = Array.isArray(prev.final_edit_results)

@@ -5,6 +5,8 @@
 export type FluxBasePromptContext = {
   department?: string | null;
   rank?: string | null;
+  /** Lasting appearance read from the customer's photos, e.g. "bald man in his late 40s with a dark chin goatee". */
+  descriptor?: string | null;
 };
 
 /** fal-ai/flux-lora — Class A fire service portrait base; insignia added in a later stage. */
@@ -22,15 +24,46 @@ export function buildFluxBasePrompt(ctx?: FluxBasePromptContext): string {
   // given "Thornton Fire Department", the model writes a made-up "THORNT…"
   // patch on the sleeve. Rank and department reach the portrait only through
   // the customer's real insignia photos.
-  void ctx;
+  //
+  // What the person looks like IS put in the prompt. The face model alone
+  // drifts toward a generic face (the first order came back clean-shaven for
+  // a customer with a goatee in every photo); stating hair, facial hair, age
+  // and build in words holds those in place.
+  const descriptor = ctx?.descriptor?.replace(/\s+/g, " ").trim();
+  const who = descriptor
+    ? `The subject is a ${descriptor}. Hair, facial hair, apparent age, face shape and build exactly as described and as in the training photos, not idealized, not younger, not slimmer. `
+    : "";
 
-  return fireClassA.replace(/\s+/g, " ").trim();
+  return `${who}${fireClassA}`.replace(/\s+/g, " ").trim();
 }
 
 export type GeminiEditPromptOptions = {
   /** True when a Class A jacket reference photo is attached as Image 4. */
   hasJacket?: boolean;
+  /**
+   * Number of real photos of the customer's face attached AFTER the insignia
+   * (and jacket) references. 0 keeps the older behaviour: the face in
+   * Image 0 is preserved as generated.
+   */
+  identityCount?: number;
+  /** Lasting appearance read from the customer's photos. */
+  descriptor?: string | null;
 };
+
+/** Section 1 of the edit prompt when real photos of the customer are attached. */
+function identitySection(first: number, count: number, descriptor?: string | null): string[] {
+  const last = first + count - 1;
+  const range = count === 1 ? `Image ${first} is a real photo` : `Images ${first} to ${last} are real photos`;
+  const d = descriptor?.replace(/\s+/g, " ").trim();
+  return [
+    "1. IDENTITY (highest priority):",
+    `${range} of the person this portrait is of. Image 0 was generated and its face is only an approximation of them. The finished portrait must show the REAL person from ${count === 1 ? "that photo" : "those photos"}, recognisable instantly by people who know them.`,
+    `Correct the face and head in Image 0 to match the real photos exactly: the same face shape and width, forehead, brow, eyes, nose, mouth, jaw, chin and ears; the same apparent age with their real lines and skin texture; the same skin tone; the same hair or bald head and hairline; the same facial hair, worn exactly as in the photos (same style, position, length and colour), or clean-shaven if they are clean-shaven in the photos.`,
+    d ? `For reference, they are a ${d}.` : "",
+    "Do not beautify, slim, smooth, or make them look younger. Do not average their features toward a generic face.",
+    "Keep the head position, camera angle, calm confident expression and studio lighting of Image 0. Take nothing else from the real photos: not their clothing, background, lighting, camera distortion or pose.",
+  ].filter(Boolean);
+}
 
 /**
  * fal-ai/gemini-3-pro-image-preview/edit
@@ -42,13 +75,21 @@ export type GeminiEditPromptOptions = {
  */
 export function buildGeminiEditPrompt(opts?: GeminiEditPromptOptions): string {
   const hasJacket = opts?.hasJacket === true;
+  const identityCount = Math.max(0, Math.floor(opts?.identityCount ?? 0));
+  const firstIdentity = hasJacket ? 5 : 4;
+  const section1 =
+    identityCount > 0
+      ? identitySection(firstIdentity, identityCount, opts?.descriptor)
+      : [
+          "1. FACE AND HEAD PRESERVATION (highest priority):",
+          "The subject's face, head, and scalp must be preserved exactly as they appear in Image 0 with zero alterations.",
+          "Preserve the subject's hair (or lack of hair) exactly as it appears in Image 0. Do not add, remove, thicken, or restyle any hair, stubble, or shadow on the head. Do not alter the hairline or scalp in any way.",
+          "The scalp and hair must be preserved with the same sacred priority as the face. Any change to hair makes this image unusable.",
+          "Do not smooth, alter, or relight the skin on the face or head.",
+          "The subject's exact likeness is sacred — any facial change makes this image unusable.",
+        ];
   return [
-    "1. FACE AND HEAD PRESERVATION (highest priority):",
-    "The subject's face, head, and scalp must be preserved exactly as they appear in Image 0 with zero alterations.",
-    "Preserve the subject's hair (or lack of hair) exactly as it appears in Image 0. Do not add, remove, thicken, or restyle any hair, stubble, or shadow on the head. Do not alter the hairline or scalp in any way.",
-    "The scalp and hair must be preserved with the same sacred priority as the face. Any change to hair makes this image unusable.",
-    "Do not smooth, alter, or relight the skin on the face or head.",
-    "The subject's exact likeness is sacred — any facial change makes this image unusable.",
+    ...section1,
     "2. BADGE:",
     "Image 1 is a photo of the customer's real department badge. Replace any badge on the uniform with THIS badge — reproduce its exact shape, text, engraving, and metal finish. Do not invent, redesign, or substitute a generic badge.",
     "Place it on the LEFT chest of the uniform, centered. Scale it to look like a real badge physically pinned to a uniform — approximately 3 inches diameter, prominent and clearly visible, not small or understated. Do not let the collar brass sizing language affect the badge — the badge should be large and prominent.",

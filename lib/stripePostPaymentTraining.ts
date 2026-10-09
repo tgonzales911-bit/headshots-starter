@@ -1,5 +1,6 @@
 import { buildTrainingZipFromImageUrls } from "@/lib/buildTrainingZip";
 import { buildTriggerPhrase, kickoffPortraitTraining } from "@/lib/falPipeline";
+import { buildIdentityProfile, IdentityProfile } from "@/lib/identityPrep";
 import { alertOperator, sendOrderConfirmation } from "@/lib/notify";
 import { SELFIE_MIN } from "@/lib/site";
 import { Database, Json } from "@/types/supabase";
@@ -127,7 +128,22 @@ export async function startOrder(args: {
   }
 
   try {
-    const zipBuffer = await buildTrainingZipFromImageUrls(images);
+    const triggerPhrase =
+      process.env.FAL_TRIGGER_PHRASE?.trim() || buildTriggerPhrase(userId, modelId);
+
+    // Look at the photos once: face crops, captions and a description of the
+    // person. Fails open — a null profile trains on the photos as uploaded.
+    let identity: IdentityProfile | null = null;
+    try {
+      identity = await buildIdentityProfile({ selfieUrls: images, userId, modelId });
+    } catch (e) {
+      console.error("[startOrder] identity analysis failed (continuing without it)", e);
+    }
+
+    const zipBuffer = await buildTrainingZipFromImageUrls(images, {
+      profile: identity,
+      trigger: triggerPhrase,
+    });
 
     const zipPath = `${userId}/${modelId}/training_${Date.now()}.zip`;
     const { error: uploadError } = await admin.storage
@@ -138,9 +154,6 @@ export async function startOrder(args: {
     }
 
     const { data: publicUrlData } = admin.storage.from(trainingBucket).getPublicUrl(zipPath);
-
-    const triggerPhrase =
-      process.env.FAL_TRIGGER_PHRASE?.trim() || buildTriggerPhrase(userId, modelId);
 
     let requestId = "";
     try {
@@ -166,6 +179,7 @@ export async function startOrder(args: {
         user_email: email,
         prompt_options: {
           ...po,
+          ...(identity ? { identity } : {}),
           order_source: args.source,
           payment_reference: args.paymentReference ?? null,
           started_at: new Date().toISOString(),
