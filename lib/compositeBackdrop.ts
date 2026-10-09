@@ -12,12 +12,15 @@
 import sharp from "sharp";
 import type { Database } from "@/types/supabase";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { applyRealInsignia, describeReports, StoredCutouts } from "@/lib/insigniaService";
 
 const bgRemovalModel = process.env.FAL_MODEL_BG_REMOVAL ?? "fal-ai/birefnet";
 const compositeBucket =
   process.env.SUPABASE_TRAINING_DATASETS_BUCKET ?? "training-datasets";
 
-type CompositeResult = { url: string; error: null } | { url: null; error: string };
+type CompositeResult =
+  | { url: string; error: null; insignia?: string }
+  | { url: null; error: string; insignia?: string };
 
 /**
  * Studio backdrops that need no asset: drawn as an SVG (soft radial falloff
@@ -120,6 +123,11 @@ export async function compositeOntoBackdrop(args: {
   backdropUrl?: string;
   /** Order's backdrop choice; studio keys are rendered, others use `backdropUrl`. */
   backgroundKey?: string;
+  /**
+   * When given, the badge and patch the edit model drew are replaced with
+   * the customer's real ones before the backdrop goes in.
+   */
+  insignia?: { stored: StoredCutouts; badgeUrl?: string; patchUrl?: string };
 }): Promise<CompositeResult> {
   try {
     const subjectUrl = await removeBackground(args.editedImageUrl);
@@ -132,11 +140,26 @@ export async function compositeOntoBackdrop(args: {
       return { url: null, error: "No backdrop available for this order" };
     }
 
-    const [subjectBuf, fetchedBackdrop] = await Promise.all([
+    const [subjectFetched, fetchedBackdrop] = await Promise.all([
       fetchBuffer(subjectUrl),
       studio ? Promise.resolve(null) : fetchBuffer(args.backdropUrl!),
     ]);
-    if (!subjectBuf) return { url: null, error: "Could not fetch subject cutout" };
+    if (!subjectFetched) return { url: null, error: "Could not fetch subject cutout" };
+
+    // Real insignia over the drawn ones. Never blocks delivery: on any
+    // problem the portrait goes out with the model's insignia.
+    let subjectBuf: Buffer = subjectFetched;
+    let insigniaNote: string | undefined;
+    if (args.insignia) {
+      try {
+        const placed = await applyRealInsignia({ subject: subjectFetched, ...args.insignia });
+        subjectBuf = placed.image;
+        insigniaNote = describeReports(placed.reports);
+      } catch (e) {
+        insigniaNote = `placement failed: ${e instanceof Error ? e.message : String(e)}`;
+        console.error("[compositeBackdrop] insignia placement failed", { modelId: args.modelId, e });
+      }
+    }
 
     const subjectMeta = await sharp(subjectBuf).metadata();
     const width = subjectMeta.width;
@@ -174,7 +197,7 @@ export async function compositeOntoBackdrop(args: {
     if (!pub.publicUrl) {
       return { url: null, error: "No public URL for composited image" };
     }
-    return { url: pub.publicUrl, error: null };
+    return { url: pub.publicUrl, error: null, insignia: insigniaNote };
   } catch (e) {
     const msg = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
     console.error("[compositeBackdrop] composite failed", { modelId: args.modelId, index: args.index, msg });

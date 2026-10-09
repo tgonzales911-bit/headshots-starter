@@ -20,6 +20,7 @@ import {
   buildRedressPrompt,
 } from "@/lib/promptMapping";
 import { buildIdentityProfile, IdentityProfile, parseIdentityProfile } from "@/lib/identityPrep";
+import { prepareOrderCutouts } from "@/lib/insigniaService";
 import { Database, Json } from "@/types/supabase";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { Resend } from "resend";
@@ -763,8 +764,26 @@ export async function startPipelineFromPhotos(
   }
   const count = editCandidates;
   const portraits = Array.from({ length: count }, (_, i) => sources[i % sources.length]);
+
+  // Cut the real badge and patch out of the customer's photos once, before
+  // any portrait is made, so all of them carry the same real insignia.
+  const poForCutouts = parseModelPromptOptions(model.prompt_options);
+  let cutouts = {};
+  try {
+    cutouts = await prepareOrderCutouts({
+      supabase,
+      userId,
+      modelId,
+      badgeUrl: poForCutouts.badge_url,
+      patchUrl: poForCutouts.patch_url,
+    });
+  } catch (e) {
+    console.error("[falPipeline] insignia cutouts failed (portraits keep the drawn insignia)", { modelId, e });
+  }
+
   const nextPo = {
     ...prev,
+    insignia_cutouts: cutouts,
     pipeline_mode: "photo",
     edit_portrait_urls: portraits,
     base_candidate_results: portraits,

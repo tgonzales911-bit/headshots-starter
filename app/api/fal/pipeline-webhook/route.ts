@@ -10,6 +10,7 @@ import {
   submitFinalEditStage,
   type OrchestratorContext,
 } from "@/lib/falPipeline";
+import { parseStoredCutouts } from "@/lib/insigniaService";
 import { alertOperator } from "@/lib/notify";
 import type { Database, Json } from "@/types/supabase";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
@@ -598,6 +599,13 @@ export async function POST(request: Request) {
         editedImageUrl: imageUrl,
         backdropUrl,
         backgroundKey: poForComposite.background,
+        insignia: {
+          stored: parseStoredCutouts(
+            (modelForMerge.prompt_options as Record<string, unknown> | null)?.insignia_cutouts
+          ),
+          badgeUrl: poForComposite.badge_url,
+          patchUrl: poForComposite.patch_url,
+        },
       });
       if (composite.url) {
         resultUrl = composite.url;
@@ -606,9 +614,11 @@ export async function POST(request: Request) {
           modelId,
           stage: "composite",
           eventType: "completed",
-          message: `Composited image ${index + 1}/${editExpected} onto the backdrop`,
+          message: `Composited image ${index + 1}/${editExpected} onto the backdrop${
+            composite.insignia ? ` — ${composite.insignia}` : ""
+          }`,
           requestId: body.request_id ?? null,
-          payload: { index, compositeUrl: composite.url },
+          payload: { index, compositeUrl: composite.url, insignia: composite.insignia ?? null },
         });
       } else {
         await insertPipelineEvent(supabase, {
