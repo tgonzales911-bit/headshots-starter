@@ -1105,7 +1105,7 @@ export default function PortraitOpsDashboard({
                     <p className="text-[11px] text-zinc-500">
                       Hover any score chip for the judge&apos;s reason.
                       {isSelection
-                        ? " The checkbox means one thing: deliver this image. To fix a weak image instead, use its own ↻ edit / ↻ base gen buttons — they never touch your delivery picks."
+                        ? " The checkbox means one thing: deliver this image. To fix a weak image instead, use its own ↻ edit / ↻ base gen buttons, or redo the whole set with Re-run all edits / New base for all in the bar below. Re-runs never touch your delivery picks."
                         : " R1 = first judge pass, R2 = after re-edit."}
                     </p>
                     <div className="sticky bottom-0 z-10 -mx-6 -mb-6 flex flex-wrap items-center gap-3 border-t border-white/15 bg-[#0c0f14]/95 px-6 py-3 backdrop-blur">
@@ -1146,6 +1146,32 @@ export default function PortraitOpsDashboard({
                         >
                           {reviewBusy === "approve" ? "Delivering…" : "Approve & Deliver"}
                         </button>
+                      )}
+                      {isSelection && !isProcessing && (
+                        <>
+                          <button
+                            type="button"
+                            disabled={reviewBusy !== null}
+                            onClick={() =>
+                              void reviewAction("rerun", slots.map((_, i) => i))
+                            }
+                            title="Redo the insignia and face-correction edit on every image, keeping the same base portraits"
+                            className="rounded-lg border border-[#4a82c9]/50 bg-[#4a82c9]/15 px-5 py-2.5 text-xs font-semibold text-[#7eb4ff] hover:bg-[#4a82c9]/25 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            {reviewBusy === "rerun" ? "Queueing…" : `Re-run all edits (${slotCount})`}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={reviewBusy !== null}
+                            onClick={() =>
+                              void reviewAction("rerun_base", slots.map((_, i) => i))
+                            }
+                            title="Generate a fresh base portrait for every image, then edit each one"
+                            className="rounded-lg border border-purple-500/50 bg-purple-500/15 px-5 py-2.5 text-xs font-semibold text-purple-300 hover:bg-purple-500/25 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            {reviewBusy === "rerun_base" ? "Queueing…" : `New base for all (${slotCount})`}
+                          </button>
+                        </>
                       )}
                       {!isSelection && !isProcessing && (
                         <>
