@@ -1,3 +1,4 @@
+import { pipelineMode } from "@/lib/falPipeline";
 import { deploymentOrigin, startOrder } from "@/lib/stripePostPaymentTraining";
 import { BACKDROP_KEYS, SELFIE_MAX, SELFIE_MIN, SUPPORT_EMAIL } from "@/lib/site";
 import { isOwnUploadUrl } from "@/lib/storageUrls";
@@ -109,8 +110,10 @@ export async function POST(request: Request) {
     isOwnUploadUrl(u, user.id)
   ) as string[];
   const selfies = Array.from(new Set(images)).slice(0, SELFIE_MAX);
-  if (selfies.length < SELFIE_MIN) {
-    return bad(`Please add at least ${SELFIE_MIN} photos of your face.`);
+  // The trained-model pipeline needs more photos than photo-first does.
+  const minPhotos = pipelineMode() === "lora" ? Math.max(SELFIE_MIN, 10) : SELFIE_MIN;
+  if (selfies.length < minPhotos) {
+    return bad(`Please add at least ${minPhotos} photos of your face.`);
   }
 
   const badge_url = text(get("badge_url"), 2000);

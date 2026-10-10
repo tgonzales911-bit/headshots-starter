@@ -239,7 +239,7 @@ export function buildDeliveryEmailText(args: DeliveryEmailArgs): string {
 // Order received
 // ---------------------------------------------------------------------------
 
-/** "Learning your face, creating portraits, adding your insignia and a final quality check" */
+/** "choosing your best photos, making your portraits and a final quality check" */
 function stepsInOneSentence(): string {
   const middle = ORDER_STEPS.slice(1, -1).map((s, i) =>
     i === 0 ? s.charAt(0).toLowerCase() + s.slice(1) : s.toLowerCase()

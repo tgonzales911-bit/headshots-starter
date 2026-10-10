@@ -6,12 +6,10 @@ type Step = (typeof ORDER_STEPS)[number];
 const STEP_DETAIL: Record<Step, string> = {
   "Order received":
     "You sign in, upload your photos, choose a backdrop and pay once. That starts the order.",
-  "Learning your face":
-    "We build a private model of your face from your photos. This is the longest stage.",
-  "Creating portraits":
-    "Your portraits are generated in the fire service Class A uniform: the navy double-breasted jacket.",
-  "Adding your insignia":
-    "Your badge, shoulder patch and collar brass are placed on the uniform from the photos you took.",
+  "Choosing your best photos":
+    "We look through your photos and pick the clearest, best-lit ones of your face to start from.",
+  "Making your portraits":
+    "We dress you in the fire service Class A uniform, the navy double-breasted jacket, and place your own badge, shoulder patch and collar brass from the photos you took. Your face stays your own.",
   "Final quality check":
     "A person checks every portrait against your photos and your insignia, and chooses the best four. If a detail is wrong, we fix it before anything is sent.",
   Ready:
@@ -29,7 +27,7 @@ export default function OrderSteps() {
             How it works
           </h2>
           <p className="mt-4 text-lg leading-relaxed text-steel-dim">
-            An order moves through six stages. Software does the drawing. A person makes the final
+            An order moves through five stages. Software does the drawing. A person makes the final
             call on every portrait before it reaches you.
           </p>
         </div>

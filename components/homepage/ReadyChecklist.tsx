@@ -1,5 +1,5 @@
 import { DoDontPair, type DiagramSubject } from "@/components/homepage/PhotoDiagrams";
-import { SELFIE_MAX, SELFIE_MIN } from "@/lib/site";
+import { SELFIE_MAX, SELFIE_MIN, SELFIE_RECOMMENDED } from "@/lib/site";
 
 /** The six rules that apply to every insignia photo. */
 const INSIGNIA_RULES: { rule: string; why: string }[] = [
@@ -39,12 +39,13 @@ type Item = {
 const FACE: Item = {
   subject: "face",
   title: "Photos of your face",
-  count: `${SELFIE_MIN} to ${SELFIE_MAX} photos. 15 or more is best.`,
+  count: `${SELFIE_MIN} to ${SELFIE_MAX} photos. ${SELFIE_RECOMMENDED} good ones is plenty.`,
   points: [
-    "Phone selfies are fine.",
-    "Mix them up: different days, different lighting, different angles.",
-    "No hats and no sunglasses.",
-    "Just you in the picture, with your face in focus.",
+    "Your portrait is made from one of these photos, so your face, head angle and expression come straight from it. Pick photos you like.",
+    "Have someone else take them at eye level, from about six feet away. An arm's-length selfie from below looks like one in the portrait.",
+    "Face the camera with your head level and a relaxed, natural expression.",
+    "Soft, even light: near a window or in open shade. No flash, no harsh overhead light.",
+    "No hats or sunglasses, and just you in the picture. Wear anything: we change your clothes and background.",
   ],
 };
 

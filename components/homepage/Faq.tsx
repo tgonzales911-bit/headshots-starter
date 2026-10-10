@@ -44,8 +44,9 @@ const QUESTIONS: { id: string; q: string; a: ReactNode }[] = [
     q: "What happens to my photos?",
     a: (
       <p>
-        They are used only to make your portraits. They are never sold or shared. We delete them
-        on request: email {supportLink}.
+        They are used only to make your portraits. The AI services that do the image work process
+        them for that purpose alone. They are never sold, and we delete them on request: email{" "}
+        {supportLink}.
       </p>
     ),
   },

@@ -339,16 +339,21 @@ export default function TrainModelZone() {
           title="Your photos"
           intro={
             <p>
-              We learn your face from everyday photos of you. Add {SELFIE_MIN} to {SELFIE_MAX};{" "}
-              {SELFIE_RECOMMENDED} gives the best likeness.
+              Each portrait starts from one of these photos, so your face, head angle and
+              expression come straight from them. Add {SELFIE_MIN} to {SELFIE_MAX};{" "}
+              {SELFIE_RECOMMENDED} good ones is plenty. We pick the best.
             </p>
           }
         >
           <ul className="max-w-prose list-disc space-y-1.5 pl-5 text-sm leading-relaxed text-foreground">
-            <li>Different days, rooms, lighting and angles. Variety matters more than polish.</li>
-            <li>Your face clearly visible. No hats, sunglasses or filters.</li>
-            <li>Only you in the picture. No group shots.</li>
-            <li>Include a few with the expression you want in your portrait.</li>
+            <li>
+              Have someone else take them at eye level, from about six feet away. An arm&apos;s-length
+              selfie from below looks like one in the portrait.
+            </li>
+            <li>Face the camera with your head level and the expression you want in your portrait.</li>
+            <li>Soft, even light: near a window or in open shade. No flash.</li>
+            <li>Your face clearly visible: no hats, sunglasses or filters, and only you in the picture.</li>
+            <li>Wear anything. We change your clothes and background.</li>
           </ul>
           <SelfieUploader uploads={uploads} />
         </Section>

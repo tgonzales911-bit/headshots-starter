@@ -152,7 +152,7 @@ function Subject({ subject, good, uid }: { subject: DiagramSubject; good: boolea
 
 const CAPTIONS: Record<DiagramSubject, { good: string; bad: string }> = {
   face: {
-    good: "Face clear, plain light",
+    good: "Eye level, facing you, soft light",
     bad: "Hat and sunglasses",
   },
   badge: {

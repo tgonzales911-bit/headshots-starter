@@ -30,8 +30,14 @@ export const PORTRAITS_PER_ORDER = 4;
 /** The one delivery promise. Every order is hand-checked before it ships. */
 export const DELIVERY_PROMISE = "Hand-checked and delivered within 24 hours";
 
-export const SELFIE_MIN = 10;
-export const SELFIE_RECOMMENDED = "15–20";
+/**
+ * Photos of the customer's face. Every portrait now starts from one of these
+ * real photos (the best few are picked automatically), so a handful of good
+ * ones beats a pile of selfies. The older trained-model pipeline
+ * (PIPELINE_MODE=lora) needs at least 10; the order API enforces that itself.
+ */
+export const SELFIE_MIN = 4;
+export const SELFIE_RECOMMENDED = "6–10";
 export const SELFIE_MAX = 20;
 
 export type CustomerStatusTone = "waiting" | "working" | "ready" | "problem";
@@ -49,9 +55,8 @@ export type CustomerStatus = {
 /** The customer-visible stages of an order, in order. */
 export const ORDER_STEPS = [
   "Order received",
-  "Learning your face",
-  "Creating portraits",
-  "Adding your insignia",
+  "Choosing your best photos",
+  "Making your portraits",
   "Final quality check",
   "Ready",
 ] as const;
@@ -64,49 +69,49 @@ const STATUS_MAP: Record<string, CustomerStatus> = {
     step: -1,
   },
   queued: {
-    label: "Order received",
-    detail: "Payment received. Your order is starting now.",
+    label: "Choosing your best photos",
+    detail: "Payment received. We are picking the best of your photos to start your portraits from.",
     tone: "working",
-    step: 0,
+    step: 1,
   },
   training: {
-    label: "Learning your face",
-    detail:
-      "We are studying your photos so every portrait looks like you. This is the longest step, usually 30 to 45 minutes.",
+    label: "Choosing your best photos",
+    detail: "We are studying your photos so every portrait looks like you.",
     tone: "working",
     step: 1,
   },
   generating: {
-    label: "Creating portraits",
-    detail: "Your portraits are being generated in Class A uniform.",
+    label: "Making your portraits",
+    detail: "Your portraits are being made in Class A uniform. This takes a few minutes.",
     tone: "working",
     step: 2,
   },
   processing_final_edit: {
-    label: "Adding your insignia",
-    detail: "Your badge, shoulder patch and collar brass are being added.",
+    label: "Making your portraits",
+    detail:
+      "Your portraits are being made in Class A uniform, with your own badge, shoulder patch and collar brass. This takes a few minutes.",
     tone: "working",
-    step: 3,
+    step: 2,
   },
   awaiting_selection: {
     label: "Final quality check",
     detail:
       "A person is checking every portrait against your photos and insignia, and choosing the best four.",
     tone: "working",
-    step: 4,
+    step: 3,
   },
   manual_review: {
     label: "Final quality check",
     detail:
       "We are taking extra care with this one. A person is correcting details by hand before it ships.",
     tone: "working",
-    step: 4,
+    step: 3,
   },
   finished: {
     label: "Ready",
     detail: "Your portraits are ready to download.",
     tone: "ready",
-    step: 5,
+    step: 4,
   },
   failed: {
     label: "We hit a problem",
