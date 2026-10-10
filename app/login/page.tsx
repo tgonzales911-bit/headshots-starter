@@ -26,7 +26,7 @@ export default async function LoginPage({
   const next = safeNext(searchParams?.next);
 
   if (user) {
-    redirect(next ?? "/");
+    redirect(next ?? "/overview");
   }
 
   return (

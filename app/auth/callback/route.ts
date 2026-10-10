@@ -3,12 +3,14 @@ import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
 import { isAuthApiError } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
+import { safeNext } from "@/app/login/next";
 
 export async function GET(req: NextRequest) {
   const requestUrl = new URL(req.url);
   const code = requestUrl.searchParams.get("code");
   const error = requestUrl.searchParams.get("error");
-  const next = requestUrl.searchParams.get("next") || "/";
+  // Same-site paths only, so a crafted sign-in link cannot bounce to another host.
+  const next = safeNext(requestUrl.searchParams.get("next") ?? undefined) ?? "/overview";
   const error_description = requestUrl.searchParams.get("error_description");
 
   if (error) {

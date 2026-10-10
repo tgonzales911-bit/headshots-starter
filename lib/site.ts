@@ -24,6 +24,13 @@ export const SUPPORT_EMAIL =
 export const ORDER_PRICE_LABEL =
   process.env.NEXT_PUBLIC_ORDER_PRICE_LABEL?.trim() || "$79";
 
+/** Where an order starts. Signed-out visitors sign in first and land here. */
+export const ORDER_START_PATH = "/overview/models/train";
+
+export function orderStartHref(signedIn: boolean): string {
+  return signedIn ? ORDER_START_PATH : `/login?next=${encodeURIComponent(ORDER_START_PATH)}`;
+}
+
 /** Portraits delivered per order. */
 export const PORTRAITS_PER_ORDER = 4;
 

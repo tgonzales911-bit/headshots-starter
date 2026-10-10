@@ -1,41 +1,40 @@
 import { createServerComponentClient } from "@supabase/auth-helpers-nextjs";
 import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
 import ClosingCta from "@/components/homepage/ClosingCta";
 import ExamplesGallery from "@/components/homepage/ExamplesGallery";
 import Faq from "@/components/homepage/Faq";
-import Hero from "@/components/homepage/Hero";
-import OrderSteps from "@/components/homepage/OrderSteps";
 import PriceCard from "@/components/homepage/PriceCard";
-import ReadyChecklist from "@/components/homepage/ReadyChecklist";
+import HowItWorks from "@/components/landing/HowItWorks";
+import LandingHero from "@/components/landing/LandingHero";
+import RealInsignia from "@/components/landing/RealInsignia";
+import UseCases from "@/components/landing/UseCases";
+import { orderStartHref } from "@/lib/site";
 
 export const dynamic = "force-dynamic";
 
 /**
- * Order start page. Customers arrive here from the "Get Your BadgeShot"
- * buttons on badgeshot.com, already decided: confirm they are in the right
- * place, tell them what to have ready, and get them signed in.
+ * Landing page. Shown to everyone, signed in or not; the header carries
+ * "My orders" for returning customers. Every order button goes straight to
+ * the order form (through sign-in when needed).
  */
 export default async function Index() {
   const supabase = createServerComponentClient({ cookies });
-
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (user) {
-    return redirect("/overview");
-  }
+  const orderHref = orderStartHref(Boolean(user));
 
   return (
     <>
-      <Hero />
-      <ReadyChecklist />
-      <OrderSteps />
-      <PriceCard />
+      <LandingHero orderHref={orderHref} />
+      <RealInsignia />
       <ExamplesGallery />
+      <HowItWorks />
+      <UseCases />
+      <PriceCard orderHref={orderHref} />
       <Faq />
-      <ClosingCta />
+      <ClosingCta orderHref={orderHref} />
     </>
   );
 }

@@ -16,7 +16,7 @@ function backdropList(): string {
   return `${labels.slice(0, -1).join(", ")} or ${labels[labels.length - 1]}`;
 }
 
-export default function PriceCard() {
+export default function PriceCard({ orderHref }: { orderHref: string }) {
   const included: { lead: string; rest?: string }[] = [
     { lead: `${PORTRAITS_PER_ORDER} finished portraits`, rest: "in fire service Class A uniform" },
     { lead: "Your own badge, shoulder patch and collar brass", rest: "placed from your photos" },
@@ -59,7 +59,7 @@ export default function PriceCard() {
               ))}
             </ul>
 
-            <Link href="/login" className="btn-gold mt-8 w-full">
+            <Link href={orderHref} className="btn-gold mt-8 w-full">
               Start my order — {ORDER_PRICE_LABEL}
             </Link>
           </div>

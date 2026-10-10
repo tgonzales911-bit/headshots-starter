@@ -9,4 +9,21 @@
  * { src: "/examples/your-file.jpg", alt: "Describe the portrait: rank, uniform, backdrop" }.
  * Portraits are displayed at a 4:5 ratio.
  */
-export const EXAMPLE_PORTRAITS: { src: string; alt: string }[] = [];
+export const EXAMPLE_PORTRAITS: { src: string; alt: string }[] = [
+  {
+    src: "/examples/portrait-1.webp",
+    alt: "Assistant chief in Class A uniform, three-quarter view, American flag backdrop",
+  },
+  {
+    src: "/examples/portrait-2.webp",
+    alt: "The same assistant chief turned slightly to his left, flag backdrop",
+  },
+  {
+    src: "/examples/portrait-4.webp",
+    alt: "The same assistant chief facing the camera, flag backdrop",
+  },
+  {
+    src: "/examples/portrait-5.webp",
+    alt: "The same assistant chief with a slight smile, flag backdrop",
+  },
+];
