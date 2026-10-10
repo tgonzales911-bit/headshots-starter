@@ -1,4 +1,8 @@
-import { deploymentOrigin, runTrainingAfterPaidCheckout } from "@/lib/stripePostPaymentTraining";
+import {
+  checkoutIsSettled,
+  deploymentOrigin,
+  runTrainingAfterPaidCheckout,
+} from "@/lib/stripePostPaymentTraining";
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 
@@ -32,7 +36,7 @@ export async function GET(request: NextRequest) {
     return problem();
   }
 
-  if (session.payment_status !== "paid") {
+  if (!checkoutIsSettled(session)) {
     // Not paid (e.g. an abandoned or delayed payment method): back to the form.
     return NextResponse.redirect(new URL("/overview/models/train?canceled=1", base));
   }

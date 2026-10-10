@@ -314,11 +314,23 @@ export async function restartStaleQueuedOrders(): Promise<number[]> {
   return restarted;
 }
 
+/**
+ * True once a checkout needs nothing more from the customer: paid, or a
+ * promotion code took the total to $0 (Stripe reports that as
+ * "no_payment_required", never "paid").
+ */
+export function checkoutIsSettled(session: Stripe.Checkout.Session): boolean {
+  return (
+    session.status === "complete" &&
+    (session.payment_status === "paid" || session.payment_status === "no_payment_required")
+  );
+}
+
 /** After Stripe checkout succeeds: start the order named in the session metadata. */
 export async function runTrainingAfterPaidCheckout(
   session: Stripe.Checkout.Session
 ): Promise<StartOrderResult> {
-  if (session.payment_status !== "paid") {
+  if (!checkoutIsSettled(session)) {
     return { ok: false, message: "Payment not completed" };
   }
 
