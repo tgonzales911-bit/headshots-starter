@@ -10,6 +10,7 @@
  */
 
 import sharp from "sharp";
+import { finishPassEnabled, pipelineFinishPreset, runFinishPass } from "@/lib/finishPass";
 import type { Database } from "@/types/supabase";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { applyRealInsignia, describeReports, StoredCutouts } from "@/lib/insigniaService";
@@ -19,7 +20,7 @@ const compositeBucket =
   process.env.SUPABASE_TRAINING_DATASETS_BUCKET ?? "training-datasets";
 
 type CompositeResult =
-  | { url: string; error: null; insignia?: string }
+  | { url: string; error: null; insignia?: string; finish?: string; rawUrl?: string }
   | { url: null; error: string; insignia?: string };
 
 /**
@@ -99,6 +100,23 @@ async function removeBackground(imageUrl: string): Promise<string | null> {
   return null;
 }
 
+/** Upload a JPEG to the composite bucket and return its public URL. */
+export async function uploadJpeg(
+  supabase: SupabaseClient<Database>,
+  path: string,
+  buf: Buffer
+): Promise<string | null> {
+  const { error } = await supabase.storage
+    .from(compositeBucket)
+    .upload(path, buf, { contentType: "image/jpeg", upsert: true });
+  if (error) {
+    console.error("[compositeBackdrop] upload failed", { path, error: error.message });
+    return null;
+  }
+  const { data } = supabase.storage.from(compositeBucket).getPublicUrl(path);
+  return data.publicUrl || null;
+}
+
 async function fetchBuffer(url: string): Promise<Buffer | null> {
   try {
     const res = await fetch(url);
@@ -128,6 +146,8 @@ export async function compositeOntoBackdrop(args: {
    * the customer's real ones before the backdrop goes in.
    */
   insignia?: { stored: StoredCutouts; badgeUrl?: string; patchUrl?: string };
+  /** Set false to skip the finishing pass (the operator's bake-off does its own). */
+  finish?: boolean;
 }): Promise<CompositeResult> {
   try {
     const subjectUrl = await removeBackground(args.editedImageUrl);
@@ -185,19 +205,35 @@ export async function compositeOntoBackdrop(args: {
       .jpeg({ quality: 95, chromaSubsampling: "4:4:4", mozjpeg: true })
       .toBuffer();
 
-    const path = `composites/${args.userId}/${args.modelId}/final_${args.index}_${Date.now()}.jpg`;
-    const { error: uploadErr } = await args.supabase.storage
-      .from(compositeBucket)
-      .upload(path, composited, { contentType: "image/jpeg", upsert: true });
-    if (uploadErr) {
-      return { url: null, error: `Storage upload failed: ${uploadErr.message}` };
+    const stamp = Date.now();
+    const rawPath = `composites/${args.userId}/${args.modelId}/raw_${args.index}_${stamp}.jpg`;
+    const rawUrl = await uploadJpeg(args.supabase, rawPath, composited);
+    if (!rawUrl) return { url: null, error: "Storage upload failed" };
+
+    // Finishing pass (upscale + skin/eye detail). The un-finished composite
+    // stays in storage as raw_*, so the operator can compare or fall back.
+    let finishNote: string | undefined;
+    let finalBuf = composited;
+    if (args.finish !== false && finishPassEnabled()) {
+      const preset = pipelineFinishPreset();
+      const finished = await runFinishPass(rawUrl, preset);
+      if (finished.ok) {
+        finalBuf = finished.buffer;
+        finishNote = `finished with ${preset.id} in ${Math.round(finished.ms / 1000)}s`;
+      } else {
+        finishNote = `finish skipped (${finished.error})`;
+        console.error("[compositeBackdrop] finish pass failed, shipping the raw composite", {
+          modelId: args.modelId,
+          index: args.index,
+          error: finished.error,
+        });
+      }
     }
 
-    const { data: pub } = args.supabase.storage.from(compositeBucket).getPublicUrl(path);
-    if (!pub.publicUrl) {
-      return { url: null, error: "No public URL for composited image" };
-    }
-    return { url: pub.publicUrl, error: null, insignia: insigniaNote };
+    const path = `composites/${args.userId}/${args.modelId}/final_${args.index}_${stamp}.jpg`;
+    const finalUrl = await uploadJpeg(args.supabase, path, finalBuf);
+    if (!finalUrl) return { url: null, error: "Storage upload failed" };
+    return { url: finalUrl, error: null, insignia: insigniaNote, finish: finishNote, rawUrl };
   } catch (e) {
     const msg = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
     console.error("[compositeBackdrop] composite failed", { modelId: args.modelId, index: args.index, msg });

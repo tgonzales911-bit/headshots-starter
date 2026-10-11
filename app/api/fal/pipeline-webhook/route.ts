@@ -662,9 +662,15 @@ export async function POST(request: Request) {
           eventType: "completed",
           message: `Composited image ${index + 1}/${editExpected} onto the backdrop${
             composite.insignia ? ` — ${composite.insignia}` : ""
-          }`,
+          }${composite.finish ? ` — ${composite.finish}` : ""}`,
           requestId: body.request_id ?? null,
-          payload: { index, compositeUrl: composite.url, insignia: composite.insignia ?? null },
+          payload: {
+            index,
+            compositeUrl: composite.url,
+            rawUrl: composite.rawUrl ?? null,
+            insignia: composite.insignia ?? null,
+            finish: composite.finish ?? null,
+          },
         });
       } else {
         await insertPipelineEvent(supabase, {
