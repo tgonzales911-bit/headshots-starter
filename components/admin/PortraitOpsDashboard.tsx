@@ -1152,6 +1152,17 @@ export default function PortraitOpsDashboard({
                                     {reviewBusy === "finish" ? "finishing…" : "✦ finish"}
                                   </button>
                                 )}
+                                {isSelection && url && (
+                                  <a
+                                    href={`/api/admin/ops/finish-bakeoff?model=${selected.id}&slot=${i + 1}&compare=1`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    title="Open the before/after for this image in a new tab"
+                                    className="flex items-center rounded border border-white/15 px-2 py-1.5 text-[10px] font-semibold text-zinc-300 hover:bg-white/10"
+                                  >
+                                    compare
+                                  </a>
+                                )}
                               </div>
                             )}
                           </div>
