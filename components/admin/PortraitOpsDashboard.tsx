@@ -701,6 +701,48 @@ export default function PortraitOpsDashboard({
     await persistModeApi("manual");
   };
 
+  /**
+   * Finishing pass (Topaz upscale + skin/eye detail) on specific images of the
+   * selected order. Each image is its own request so they run in parallel;
+   * the stored result is replaced on success and the un-finished copy stays
+   * in storage.
+   */
+  const finishAction = useCallback(
+    async (indices: number[]) => {
+      if (!selected || indices.length === 0) return;
+      setReviewBusy("finish");
+      setReviewMsg({ ok: true, text: `Finishing image(s) ${indices.map((i) => i + 1).join(", ")}… about a minute.` });
+      try {
+        const outcomes = await Promise.all(
+          indices.map(async (i) => {
+            try {
+              const res = await fetch(
+                `/api/admin/ops/finish-bakeoff?model=${selected.id}&slot=${i + 1}&apply=topaz-standard&format=json`
+              );
+              const body = (await res.json()) as { applied?: string | null; results?: { error?: string }[]; error?: string };
+              if (res.ok && body.applied) return { i, ok: true as const };
+              return { i, ok: false as const, error: body.error ?? body.results?.[0]?.error ?? "failed" };
+            } catch (e) {
+              return { i, ok: false as const, error: e instanceof Error ? e.message : "failed" };
+            }
+          })
+        );
+        const done = outcomes.filter((o) => o.ok).map((o) => o.i + 1);
+        const failed = outcomes.filter((o) => !o.ok);
+        setReviewMsg({
+          ok: failed.length === 0,
+          text:
+            `Finished image(s) ${done.join(", ") || "none"}.` +
+            (failed.length ? ` Failed: ${failed.map((f) => `${f.i + 1} (${f.error})`).join("; ")}.` : ""),
+        });
+        await refreshOrders();
+      } finally {
+        setReviewBusy(null);
+      }
+    },
+    [selected, refreshOrders]
+  );
+
   const reviewAction = useCallback(
     async (
       action: "approve" | "rerun" | "rerun_base" | "escalate" | "repair" | "judge" | "select",
@@ -1099,6 +1141,17 @@ export default function PortraitOpsDashboard({
                                 >
                                   ↻ base gen
                                 </button>
+                                {isSelection && url && (
+                                  <button
+                                    type="button"
+                                    disabled={reviewBusy !== null}
+                                    onClick={() => void finishAction([i])}
+                                    title="Finishing pass: upscale to 4K and restore skin and eye detail (Topaz). Keeps the real badge and patch exact."
+                                    className="flex-1 rounded border border-gold/50 bg-gold/10 px-2 py-1.5 text-[10px] font-semibold text-gold-bright hover:bg-gold/20 disabled:opacity-40"
+                                  >
+                                    {reviewBusy === "finish" ? "finishing…" : "✦ finish"}
+                                  </button>
+                                )}
                               </div>
                             )}
                           </div>
@@ -1173,6 +1226,15 @@ export default function PortraitOpsDashboard({
                             className="rounded-lg border border-purple-500/50 bg-purple-500/15 px-5 py-2.5 text-xs font-semibold text-purple-300 hover:bg-purple-500/25 disabled:cursor-not-allowed disabled:opacity-40"
                           >
                             {reviewBusy === "rerun_base" ? "Queueing…" : `New base for all (${slotCount})`}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={reviewBusy !== null}
+                            onClick={() => void finishAction(slots.map((_, i) => i).filter((i) => Boolean(slots[i])))}
+                            title="Finishing pass on every image: upscale to 4K and restore skin and eye detail (Topaz, about 8¢ each)"
+                            className="rounded-lg border border-gold/60 bg-gold/15 px-5 py-2.5 text-xs font-semibold text-gold-bright hover:bg-gold/25 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            {reviewBusy === "finish" ? "Finishing…" : `Finish all (${slotCount})`}
                           </button>
                         </>
                       )}
